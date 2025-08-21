@@ -21,15 +21,6 @@ scipy>=1.7.0
 
 # Additional utilities
 pathlib2>=2.3.0
-argparse
-
-# Logging
-logging
-
-# Math and random
-math
-random
-functools
 
 # Typing support
 typing-extensions>=4.0.0
