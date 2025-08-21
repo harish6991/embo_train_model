@@ -341,7 +341,7 @@ class ComprehensiveEmbroideryLoss(nn.Module):
         }
 
 # Data loading - Updated to use embs_t_aligned dataset
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET_SAMPLE/embs_t_aligned/train", augment=True)
+train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_t_aligned/train", augment=True)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
 # Model initialization
