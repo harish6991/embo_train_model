@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 8  # Reduced for better stability
-epochs =  375 # More epochs for better convergence
-lr = 0.0001  # Slightly lower learning rate
+batch_size = 8  # 
+epochs = 300  # Reduced from 375 for better convergence
+lr_generator = 0.00005  # Reduced generator learning rate to prevent dominance
+lr_discriminator = 0.0003  # Increased discriminator learning rate (3x) to fix D_Loss=0.0000
 beta1 = 0.5
 beta2 = 0.999
 
@@ -240,8 +241,8 @@ class EdgeAwareLoss(nn.Module):
 
 class ComprehensiveEmbroideryLoss(nn.Module):
     """Combined loss function for embroidery generation that captures both structure and details"""
-    def __init__(self, device=None, ssim_weight=0.1, perceptual_weight=0.1,
-                 edge_weight=0.4, l1_weight=0.3, color_weight=0.1):
+    def __init__(self, device=None, ssim_weight=0.2, perceptual_weight=0.3,
+                 edge_weight=0.2, l1_weight=0.2, color_weight=0.1):
         super().__init__()
         self.device = device if device is not None else torch.device("cpu")
 
@@ -254,12 +255,12 @@ class ComprehensiveEmbroideryLoss(nn.Module):
         # NEW: Color preservation loss
         self.color_loss = nn.MSELoss()
 
-        # Weights for combining losses - PRIORITIZE EDGE LOSS AND COLOR PRESERVATION
-        self.ssim_weight = ssim_weight      # Reduced from 0.1 to 0.1
-        self.perceptual_weight = perceptual_weight  # Reduced from 0.1 to 0.1
-        self.edge_weight = edge_weight      # Reduced from 0.6 to 0.4
-        self.l1_weight = l1_weight         # Increased from 0.2 to 0.3
-        self.color_weight = color_weight    # NEW: 0.1 for color preservation
+        # BALANCED weights for better training stability
+        self.ssim_weight = ssim_weight      # Increased from 0.1 to 0.2
+        self.perceptual_weight = perceptual_weight  # Increased from 0.1 to 0.3
+        self.edge_weight = edge_weight      # Reduced from 0.4 to 0.2 (was dominating)
+        self.l1_weight = l1_weight         # Kept at 0.2
+        self.color_weight = color_weight    # Kept at 0.1 for color preservation
 
     def forward(self, pred, target):
         # Calculate individual losses with error handling
@@ -300,14 +301,7 @@ class ComprehensiveEmbroideryLoss(nn.Module):
             if torch.isnan(color_loss) or torch.isinf(color_loss):
                 color_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
 
-            # AGGRESSIVE LOSS SCALING - PRIORITIZE COLOR AND CRISPNESS
-            ssim_loss = ssim_loss * 30.0      # Reduced scaling
-            perceptual_loss = perceptual_loss * 30.0  # Reduced scaling
-            edge_loss = edge_loss * 300.0      # HIGH scaling for crispness
-            l1_loss = l1_loss * 400.0         # VERY HIGH scaling for pixel accuracy
-            color_loss = color_loss * 500.0    # HIGHEST scaling for color preservation
-
-            # Combine losses with weights - COLOR AND EDGE DOMINATE
+            # Combine losses with weights - BALANCED APPROACH for stable training
             total_loss = (self.ssim_weight * ssim_loss +
                          self.perceptual_weight * perceptual_loss +
                          self.edge_weight * edge_loss +
@@ -414,16 +408,20 @@ criterion_GAN = nn.BCEWithLogitsLoss()
 comprehensive_loss = ComprehensiveEmbroideryLoss(device=device)
 
 # Optimizers
-optimizer_G = optim.Adam(generator.parameters(), lr=lr, betas=(beta1, beta2))
-optimizer_D = optim.Adam(discriminator.parameters(), lr=lr, betas=(beta1, beta2))
+optimizer_G = optim.Adam(generator.parameters(), lr=lr_generator, betas=(beta1, beta2))
+optimizer_D = optim.Adam(discriminator.parameters(), lr=lr_discriminator, betas=(beta1, beta2))
 
-# Learning rate schedulers with better scheduling
-def lambda_rule(epoch):
-    lr_l = 1.0 - max(0, epoch - 100) / 100
-    return max(lr_l, 0.1)
+# Learning rate schedulers with better scheduling for balanced training
+def lambda_rule_generator(epoch):
+    lr_l = 1.0 - max(0, epoch - 150) / 150  # Slower decay for generator
+    return max(lr_l, 0.2)
 
-scheduler_G = optim.lr_scheduler.LambdaLR(optimizer_G, lr_lambda=lambda_rule)
-scheduler_D = optim.lr_scheduler.LambdaLR(optimizer_D, lr_lambda=lambda_rule)
+def lambda_rule_discriminator(epoch):
+    lr_l = 1.0 - max(0, epoch - 100) / 100  # Faster decay for discriminator
+    return max(lr_l, 0.3)
+
+scheduler_G = optim.lr_scheduler.LambdaLR(optimizer_G, lr_lambda=lambda_rule_generator)
+scheduler_D = optim.lr_scheduler.LambdaLR(optimizer_D, lr_lambda=lambda_rule_discriminator)
 
 # Training function with enhanced losses
 def train_epoch(epoch):
@@ -450,33 +448,37 @@ def train_epoch(epoch):
         real_labels = torch.ones(batch_size, 1, 30, 30).to(device)
         fake_labels = torch.zeros(batch_size, 1, 30, 30).to(device)
 
-        # Train Discriminator
-        optimizer_D.zero_grad()
+        # Train Discriminator (ensure it gets enough training)
+        if batch_idx % 1 == 0:  # Train discriminator every batch
+            optimizer_D.zero_grad()
 
-        # Real images
-        real_output = discriminator(torch.cat([input_images, target_images], dim=1))
-        d_loss_real = criterion_GAN(real_output, real_labels)
+            # Real images
+            real_output = discriminator(torch.cat([input_images, target_images], dim=1))
+            d_loss_real = criterion_GAN(real_output, real_labels)
 
-        # Fake images
-        fake_images = generator(input_images)
-        fake_output = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
-        d_loss_fake = criterion_GAN(fake_output, fake_labels)
+            # Fake images
+            fake_images = generator(input_images)
+            fake_output = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
+            d_loss_fake = criterion_GAN(fake_output, fake_labels)
 
-        d_loss = (d_loss_real + d_loss_fake) * 0.5
+            d_loss = (d_loss_real + d_loss_fake) * 0.5
 
-        # Check for NaN in discriminator loss
-        if torch.isnan(d_loss) or torch.isinf(d_loss):
-            print(f"Warning: NaN/Inf in discriminator loss at batch {batch_idx}")
-            continue
+            # Check for NaN in discriminator loss
+            if torch.isnan(d_loss) or torch.isinf(d_loss):
+                print(f"Warning: NaN/Inf in discriminator loss at batch {batch_idx}")
+                continue
 
-        d_loss.backward()
+            d_loss.backward()
 
-        # Clip discriminator gradients
-        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+            # Enhanced gradient clipping for discriminator
+            torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=0.5)  # Reduced from 1.0
 
-        optimizer_D.step()
+            optimizer_D.step()
+        else:
+            # Skip discriminator training this batch
+            d_loss = torch.tensor(0.0, device=device)
 
-        # Train Generator
+        # Train Generator (every batch for better balance)
         optimizer_G.zero_grad()
 
         # Adversarial loss
@@ -515,12 +517,12 @@ def train_epoch(epoch):
 
         g_loss.backward()
 
-        # Clip generator gradients
-        torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
+        # Enhanced gradient clipping for generator
+        torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=0.8)  # Reduced from 1.0
 
         optimizer_G.step()
 
-        # Update progress bar
+        # Update progress bar with enhanced monitoring
         total_g_loss += g_loss.item()
         total_d_loss += d_loss.item()
         total_comprehensive_loss += g_loss_comprehensive.item()
@@ -529,6 +531,13 @@ def train_epoch(epoch):
         total_edge_loss += loss_breakdown['edge_loss']
         total_l1_loss += loss_breakdown['l1_loss']
         total_color_loss += loss_breakdown['color_loss']
+
+        # Enhanced monitoring for discriminator recovery
+        if batch_idx % 20 == 0:  # Check every 20 batches
+            current_lr_g = optimizer_G.param_groups[0]['lr']
+            current_lr_d = optimizer_D.param_groups[0]['lr']
+            print(f"DEBUG - Epoch {epoch+1}, Batch {batch_idx}: G_LR={current_lr_g:.6f}, D_LR={current_lr_d:.6f}")
+            print(f"DEBUG - D_Loss trend: {d_loss.item():.6f} (should be > 0.0000)")
 
         progress_bar.set_postfix({
             'G_Loss': f'{g_loss.item():.4f}',
