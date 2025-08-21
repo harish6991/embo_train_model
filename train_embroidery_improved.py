@@ -591,7 +591,7 @@ def save_sample_images(input_images, target_images, fake_images, epoch, batch_id
     plt.close()
 
 def save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D, losses, prefix='epoch'):
-    """Save model checkpoints with smart space management"""
+    """Save model checkpoints"""
     checkpoint = {
         'epoch': epoch,
         'generator_state_dict': generator.state_dict(),
@@ -611,110 +611,6 @@ def save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D, l
     filename = f'checkpoints/embroidery_improved_{prefix}_{epoch}.pth'
     torch.save(checkpoint, filename)
     logger.info(f'Checkpoint saved: {filename}')
-    
-    # Clean up old checkpoints to save space
-    cleanup_old_checkpoints(epoch, prefix)
-
-def cleanup_old_checkpoints(current_epoch, prefix):
-    """Clean up old checkpoints to save disk space"""
-    import os
-    import glob
-    
-    # Keep only the most recent checkpoints
-    if prefix == 'epoch':
-        # For regular epoch checkpoints, keep only last 5
-        pattern = 'checkpoints/embroidery_improved_epoch_*.pth'
-        files = glob.glob(pattern)
-        if len(files) > 5:
-            # Sort by epoch number and keep only the 5 most recent
-            files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-            files_to_delete = files[:-5]  # Keep last 5, delete the rest
-            
-            for file in files_to_delete:
-                try:
-                    os.remove(file)
-                    logger.info(f'Deleted old checkpoint: {file}')
-                except Exception as e:
-                    logger.warning(f'Could not delete {file}: {e}')
-    
-    elif prefix == 'best':
-        # For best model checkpoints, keep only last 3
-        pattern = 'checkpoints/embroidery_improved_best_*.pth'
-        files = glob.glob(pattern)
-        if len(files) > 3:
-            files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-            files_to_delete = files[:-3]  # Keep last 3, delete the rest
-            
-            for file in files_to_delete:
-                try:
-                    os.remove(file)
-                    logger.info(f'Deleted old best checkpoint: {file}')
-                except Exception as e:
-                    logger.warning(f'Could not delete {file}: {e}')
-    
-    # Also clean up sample images (keep only last 10)
-    sample_pattern = 'sample_images/epoch_*_batch_*.png'
-    sample_files = glob.glob(sample_pattern)
-    if len(sample_files) > 10:
-        sample_files.sort(key=lambda x: (int(x.split('_')[1]), int(x.split('_')[3].split('.')[0])))
-        files_to_delete = sample_files[:-10]
-        
-        for file in files_to_delete:
-            try:
-                os.remove(file)
-            except Exception as e:
-                logger.warning(f'Could not delete sample image {file}: {e}')
-
-def cleanup_existing_checkpoints():
-    """Clean up existing checkpoints to free up immediate space"""
-    import os
-    import glob
-    
-    logger.info("Cleaning up existing checkpoints to save space...")
-    
-    # Clean up regular epoch checkpoints (keep only last 5)
-    epoch_pattern = 'checkpoints/embroidery_improved_epoch_*.pth'
-    epoch_files = glob.glob(epoch_pattern)
-    if len(epoch_files) > 5:
-        epoch_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-        files_to_delete = epoch_files[:-5]
-        
-        for file in files_to_delete:
-            try:
-                os.remove(file)
-                logger.info(f'Deleted old epoch checkpoint: {file}')
-            except Exception as e:
-                logger.warning(f'Could not delete {file}: {e}')
-    
-    # Clean up best model checkpoints (keep only last 3)
-    best_pattern = 'checkpoints/embroidery_improved_best_*.pth'
-    best_files = glob.glob(best_pattern)
-    if len(best_files) > 3:
-        best_files.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
-        files_to_delete = best_files[:-3]
-        
-        for file in files_to_delete:
-            try:
-                os.remove(file)
-                logger.info(f'Deleted old best checkpoint: {file}')
-            except Exception as e:
-                logger.warning(f'Could not delete {file}: {e}')
-    
-    # Clean up sample images (keep only last 10)
-    sample_pattern = 'sample_images/epoch_*_batch_*.png'
-    sample_files = glob.glob(sample_pattern)
-    if len(sample_files) > 10:
-        sample_files.sort(key=lambda x: (int(x.split('_')[1]), int(x.split('_')[3].split('.')[0])))
-        files_to_delete = sample_files[:-10]
-        
-        for file in files_to_delete:
-            try:
-                os.remove(file)
-                logger.info(f'Deleted old sample image: {file}')
-            except Exception as e:
-                logger.warning(f'Could not delete {file}: {e}')
-    
-    logger.info("Checkpoint cleanup completed!")
 
 # Main training loop
 def main():
@@ -728,9 +624,6 @@ def main():
     logger.info(f"  Perceptual: {comprehensive_loss.perceptual_weight}")
     logger.info(f"  SSIM: {comprehensive_loss.ssim_weight}")
     logger.info(f"  L1: {comprehensive_loss.l1_weight}")
-    
-    # Clean up existing checkpoints to save space
-    cleanup_existing_checkpoints()
     
     logger.info("Continuing training with existing model weights...")
 
@@ -761,11 +654,11 @@ def main():
                           (avg_g_loss, avg_d_loss, avg_comprehensive_loss, avg_ssim_loss, avg_perceptual_loss, avg_edge_loss, avg_l1_loss, avg_color_loss), prefix='best')
             logger.info(f"Updated best model with comprehensive loss: {best_comprehensive_loss:.6f}")
 
-        # Save checkpoint every 10 epochs (instead of every epoch)
-        if epoch % 10 == 0 and epoch > 0:
+        # Save checkpoint every 30 epochs (instead of every epoch)
+        if epoch % 30 == 0 and epoch > 0:
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
                           (avg_g_loss, avg_d_loss, avg_comprehensive_loss, avg_ssim_loss, avg_perceptual_loss, avg_edge_loss, avg_l1_loss, avg_color_loss))
-            logger.info(f"Checkpoint saved every 10 epochs: epoch {epoch}")
+            logger.info(f"Checkpoint saved every 30 epochs: epoch {epoch}")
 
         # Save last epoch model
         if epoch == epochs - 1:
