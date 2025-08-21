@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 2  # Reduced for better stability
-epochs = 200  # More epochs for better convergence
+batch_size = 32  # Reduced for better stability
+epochs =  375 # More epochs for better convergence
 lr = 0.0001  # Slightly lower learning rate
 beta1 = 0.5
 beta2 = 0.999
