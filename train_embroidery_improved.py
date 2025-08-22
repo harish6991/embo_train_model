@@ -135,7 +135,7 @@ class SSIMLoss(nn.Module):
 
 # Data loading - Updated to use embs_t_aligned dataset
 # train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET_SAMPLE/embs_f_aligned/train", augment=True)
-train_dataset = PrefixStitchDataset("./MSEmb_DATASET_SAMPLE/embs_f_unaligned/train/trainX_c","./MSEmb_DATASET_SAMPLE/embs_f_unaligned/train/trainX_e")
+train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_f_unaligned/train/trainX_c","./MSEmb_DATASET/embs_f_unaligned/train/trainX_e")
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
 # Model initialization
