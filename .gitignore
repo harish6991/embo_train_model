@@ -53,6 +53,7 @@ cover/
 # folders
 MSEmb_DATASET_SAMPLE/
 MSEmb_DATASET/
+MSEmb_DATASET.zip
 # Translations
 *.mo
 *.pot
