@@ -15,7 +15,8 @@ from math import exp
 
 # Import custom modules
 from utils.align import AlignedEmbroideryDataset
-from models.unetModel import UnetGenerator, UnetSkipConnectionBlock
+from utils.prefixDataset import PrefixStitchDataset
+from models.test_model import UnetGenerator, UnetSkipConnectionBlock
 from models.patchGAN import NLayerDiscriminator
 
 # Set up logging
@@ -24,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 8  # Reduced for better stability
-epochs = 300  # More epochs for better convergence
+batch_size = 10  # Reduced for better stability
+epochs = 250  # More epochs for better convergence
 lambda_L1 = 200  # Increased L1 weight
 lambda_perceptual = 10  # Perceptual loss weight
 lambda_ssim = 5  # SSIM loss weight
@@ -42,22 +43,22 @@ class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
     def __init__(self, root_dir, image_size=256, augment=True):
         super().__init__(root_dir, image_size)
         self.augment = augment
-        
+
     def __getitem__(self, idx):
         input_tensor, target_tensor = super().__getitem__(idx)
-        
+
         if self.augment and random.random() > 0.5:
             # Random horizontal flip
             if random.random() > 0.5:
                 input_tensor = torch.flip(input_tensor, [2])
                 target_tensor = torch.flip(target_tensor, [2])
-            
+
             # Random brightness adjustment
             if random.random() > 0.5:
                 brightness_factor = random.uniform(0.8, 1.2)
                 input_tensor = torch.clamp(input_tensor * brightness_factor, -1, 1)
                 target_tensor = torch.clamp(target_tensor * brightness_factor, -1, 1)
-        
+
         return input_tensor, target_tensor
 
 # Enhanced loss functions
@@ -69,7 +70,7 @@ class PerceptualLoss(nn.Module):
         self.features = nn.Sequential(*list(vgg.features.children())[:16]).to(device)
         for param in self.features.parameters():
             param.requires_grad = False
-    
+
     def forward(self, x, y):
         x_features = self.features(x)
         y_features = self.features(y)
@@ -117,23 +118,24 @@ class SSIMLoss(nn.Module):
 
     def forward(self, img1, img2):
         (_, channel, _, _) = img1.size()
-        
+
         if channel == self.channel and self.window.data.type() == img1.data.type():
             window = self.window
         else:
             window = self.create_window(self.window_size, channel)
-            
+
             if img1.is_cuda:
                 window = window.cuda(img1.get_device())
             window = window.type_as(img1)
-            
+
             self.window = window
             self.channel = channel
 
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading - Updated to use embs_t_aligned dataset
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_t_aligned/train", augment=True)
+# train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET_SAMPLE/embs_f_aligned/train", augment=True)
+train_dataset = PrefixStitchDataset("./MSEmb_DATASET_SAMPLE/embs_f_unaligned/train/trainX_c","./MSEmb_DATASET_SAMPLE/embs_f_unaligned/train/trainX_e")
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
 # Model initialization
@@ -223,68 +225,68 @@ scheduler_D = optim.lr_scheduler.LambdaLR(optimizer_D, lr_lambda=lambda_rule)
 def train_epoch(epoch):
     generator.train()
     discriminator.train()
-    
+
     total_g_loss = 0
     total_d_loss = 0
     total_l1_loss = 0
     total_perceptual_loss = 0
     total_ssim_loss = 0
-    
+
     progress_bar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}')
-    
+
     for batch_idx, (input_images, target_images) in enumerate(progress_bar):
         input_images = input_images.to(device)
         target_images = target_images.to(device)
-        
+
         # Create labels for GAN loss
         batch_size = input_images.size(0)
         real_labels = torch.ones(batch_size, 1, 30, 30).to(device)
         fake_labels = torch.zeros(batch_size, 1, 30, 30).to(device)
-        
+
         # Train Discriminator
         optimizer_D.zero_grad()
-        
+
         # Real images
         real_output = discriminator(torch.cat([input_images, target_images], dim=1))
         d_loss_real = criterion_GAN(real_output, real_labels)
-        
+
         # Fake images
         fake_images = generator(input_images)
         fake_output = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
         d_loss_fake = criterion_GAN(fake_output, fake_labels)
-        
+
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
         optimizer_D.step()
-        
+
         # Train Generator
         optimizer_G.zero_grad()
-        
+
         # Adversarial loss
         fake_output = discriminator(torch.cat([input_images, fake_images], dim=1))
         g_loss_gan = criterion_GAN(fake_output, real_labels)
-        
+
         # L1 loss
         g_loss_l1 = criterion_L1(fake_images, target_images)
-        
+
         # Perceptual loss
         g_loss_perceptual = criterion_perceptual(fake_images, target_images)
-        
+
         # SSIM loss
         g_loss_ssim = criterion_ssim(fake_images, target_images)
-        
+
         # Total generator loss with enhanced weights
         g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim
         g_loss.backward()
         optimizer_G.step()
-        
+
         # Update progress bar
         total_g_loss += g_loss.item()
         total_d_loss += d_loss.item()
         total_l1_loss += g_loss_l1.item()
         total_perceptual_loss += g_loss_perceptual.item()
         total_ssim_loss += g_loss_ssim.item()
-        
+
         progress_bar.set_postfix({
             'G_Loss': f'{g_loss.item():.4f}',
             'D_Loss': f'{d_loss.item():.4f}',
@@ -292,13 +294,13 @@ def train_epoch(epoch):
             'Perceptual': f'{g_loss_perceptual.item():.4f}',
             'SSIM': f'{g_loss_ssim.item():.4f}'
         })
-        
+
         # Sample images will be saved after each epoch completion
-    
+
     # Update learning rates
     scheduler_G.step()
     scheduler_D.step()
-    
+
     return (total_g_loss / len(train_loader), total_d_loss / len(train_loader),
             total_l1_loss / len(train_loader), total_perceptual_loss / len(train_loader),
             total_ssim_loss / len(train_loader))
@@ -309,26 +311,26 @@ def save_sample_images(input_images, target_images, fake_images, epoch, batch_id
     input_np = input_images[0].cpu().detach().numpy().transpose(1, 2, 0)
     target_np = target_images[0].cpu().detach().numpy().transpose(1, 2, 0)
     fake_np = fake_images[0].cpu().detach().numpy().transpose(1, 2, 0)
-    
+
     # Normalize to [0, 1] range
     input_np = (input_np + 1) / 2
     target_np = (target_np + 1) / 2
     fake_np = (fake_np + 1) / 2
-    
+
     # Create figure
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     axes[0].imshow(input_np)
     axes[0].set_title('Input')
     axes[0].axis('off')
-    
+
     axes[1].imshow(target_np)
     axes[1].set_title('Target')
     axes[1].axis('off')
-    
+
     axes[2].imshow(fake_np)
     axes[2].set_title('Generated')
     axes[2].axis('off')
-    
+
     plt.savefig(f'sample_images/epoch_{epoch}_batch_{batch_idx}.png')
     plt.close()
 
@@ -339,41 +341,41 @@ def save_sample_images_epoch(generator, dataset, epoch):
         # Get a few sample images from the dataset
         num_samples = min(3, len(dataset))
         sample_indices = [0, len(dataset)//2, len(dataset)-1] if len(dataset) >= 3 else [0]
-        
+
         for i, idx in enumerate(sample_indices):
             input_img, target_img = dataset[idx]
             input_img = input_img.unsqueeze(0).to(device)
-            
+
             # Generate fake image
             fake_img = generator(input_img)
-            
+
             # Convert tensors to numpy arrays
             input_np = input_img[0].cpu().numpy().transpose(1, 2, 0)
             target_np = target_img.numpy().transpose(1, 2, 0)
             fake_np = fake_img[0].cpu().numpy().transpose(1, 2, 0)
-            
+
             # Normalize to [0, 1] range
             input_np = (input_np + 1) / 2
             target_np = (target_np + 1) / 2
             fake_np = (fake_np + 1) / 2
-            
+
             # Create figure
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             axes[0].imshow(input_np)
             axes[0].set_title('Input')
             axes[0].axis('off')
-            
+
             axes[1].imshow(target_np)
             axes[1].set_title('Target')
             axes[1].axis('off')
-            
+
             axes[2].imshow(fake_np)
             axes[2].set_title('Generated')
             axes[2].axis('off')
-            
+
             plt.savefig(f'sample_images/epoch_{epoch}_sample_{i}.png')
             plt.close()
-    
+
     generator.train()
     logger.info(f"Sample images saved for epoch {epoch+1}")
 
@@ -391,7 +393,7 @@ def save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D, l
         'perceptual_loss': losses[3],
         'ssim_loss': losses[4]
     }
-    
+
     filename = f'checkpoints/embroidery_improved_{prefix}_{epoch}.pth'
     torch.save(checkpoint, filename)
     logger.info(f'Checkpoint saved: {filename}')
@@ -410,7 +412,7 @@ def save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer
         'perceptual_loss': losses[3],
         'ssim_loss': losses[4]
     }
-    
+
     # Always use the same filename for best checkpoint
     filename = 'checkpoints/embroidery_improved_best.pth'
     torch.save(checkpoint, filename)
@@ -427,33 +429,33 @@ def main():
     logger.info(f"Lambda Perceptual: {lambda_perceptual}")
     logger.info(f"Lambda SSIM: {lambda_ssim}")
     logger.info("Continuing training with existing model weights...")
-    
+
     best_l1_loss = float('inf')
-    
+
     for epoch in range(epochs):
         logger.info(f"Epoch {epoch+1}/{epochs}")
-        
+
         # Train one epoch
         avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss = train_epoch(epoch)
-        
+
         logger.info(f"Epoch {epoch+1} - G_Loss: {avg_g_loss:.4f}, D_Loss: {avg_d_loss:.4f}")
         logger.info(f"L1: {avg_l1_loss:.6f}, Perceptual: {avg_perceptual_loss:.6f}, SSIM: {avg_ssim_loss:.6f}")
-        
+
         # Save sample images after each epoch completion
         save_sample_images_epoch(generator, train_dataset, epoch)
-        
+
         # Save first epoch model
         if epoch == 0:
-            save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D, 
+            save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
                           (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss))
             logger.info(f"First epoch model saved")
-        
+
         # Save checkpoint every 20 epochs
         if (epoch + 1) % 20 == 0:
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
                           (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss), prefix='epoch')
             logger.info(f"Checkpoint saved every 20 epochs at epoch {epoch + 1}")
-        
+
         # Save best model based on L1 loss
         if avg_l1_loss < best_l1_loss:
             best_l1_loss = avg_l1_loss
@@ -462,7 +464,7 @@ def main():
             save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
                                (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss))
             logger.info(f"Updated best model with L1 loss: {best_l1_loss:.6f}")
-        
+
         # Save last epoch model
         if epoch == epochs - 1:
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
@@ -470,4 +472,4 @@ def main():
             logger.info(f"Final epoch model saved")
 
 if __name__ == "__main__":
-    main() 
+    main()
