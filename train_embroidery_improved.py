@@ -52,7 +52,7 @@ class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
         """Rotate tensor by given angle"""
         if angle == 0:
             return tensor
-        
+
         # Convert to PIL, rotate, convert back
         tensor_np = tensor.cpu().numpy().transpose(1, 2, 0)
         tensor_np = (tensor_np + 1) / 2  # Denormalize to [0, 1]
@@ -66,12 +66,12 @@ class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
         """Scale tensor by given factor"""
         if scale == 1.0:
             return tensor
-        
+
         # Use F.interpolate for scaling
         h, w = tensor.shape[1], tensor.shape[2]
         new_h, new_w = int(h * scale), int(w * scale)
         scaled = F.interpolate(tensor.unsqueeze(0), size=(new_h, new_w), mode='bilinear', align_corners=False)
-        
+
         # Pad or crop to original size
         if scale > 1.0:
             # Crop from center
@@ -85,7 +85,7 @@ class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
             padded = torch.zeros(1, 3, h, w, device=tensor.device)
             padded[:, :, pad_h:pad_h+new_h, pad_w:pad_w+new_w] = scaled
             scaled = padded
-        
+
         return scaled.squeeze(0)
 
     def __getitem__(self, idx):
@@ -196,12 +196,12 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET_SAMPLE/embs_s_aligned/train", augment=True)
+train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train", augment=True)
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(
-    range(len(train_dataset)), 
-    test_size=0.2, 
+    range(len(train_dataset)),
+    test_size=0.2,
     random_state=42
 )
 
@@ -392,16 +392,16 @@ def train_epoch(epoch):
 def validate_epoch(generator, val_loader):
     generator.eval()
     total_val_loss = 0
-    
+
     with torch.no_grad():
         for input_images, target_images in val_loader:
             input_images = input_images.to(device)
             target_images = target_images.to(device)
-            
+
             fake_images = generator(input_images)
             val_loss = criterion_L1(fake_images, target_images)
             total_val_loss += val_loss.item()
-    
+
     generator.train()
     return total_val_loss / len(val_loader)
 
