@@ -12,6 +12,8 @@ import torch.nn.functional as F
 import functools
 import random
 from math import exp
+from sklearn.model_selection import train_test_split
+from PIL import Image
 
 # Import custom modules
 from utils.align import AlignedEmbroideryDataset
@@ -25,29 +27,83 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 10  # Reduced for better stability
-epochs = 250  # More epochs for better convergence
+batch_size =10  # Reduced for better stability
+epochs = 300  # More epochs for better convergence
 lambda_L1 = 200  # Increased L1 weight
 lambda_perceptual = 10  # Perceptual loss weight
 lambda_ssim = 5  # SSIM loss weight
 lr = 0.0001  # Slightly lower learning rate
 beta1 = 0.5
 beta2 = 0.999
+weight_decay = 1e-4  # L2 regularization
+patience = 20  # Early stopping patience
 
 # Create output directories
 os.makedirs("checkpoints", exist_ok=True)
 os.makedirs("sample_images", exist_ok=True)
 
-# Data loading with augmentation
+# Enhanced data loading with comprehensive augmentation
 class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
     def __init__(self, root_dir, image_size=256, augment=True):
         super().__init__(root_dir, image_size)
         self.augment = augment
 
+    def rotate_tensor(self, tensor, angle):
+        """Rotate tensor by given angle"""
+        if angle == 0:
+            return tensor
+        
+        # Convert to PIL, rotate, convert back
+        tensor_np = tensor.cpu().numpy().transpose(1, 2, 0)
+        tensor_np = (tensor_np + 1) / 2  # Denormalize to [0, 1]
+        tensor_pil = Image.fromarray((tensor_np * 255).astype(np.uint8))
+        rotated_pil = tensor_pil.rotate(angle, resample=Image.BILINEAR)
+        rotated_np = np.array(rotated_pil).astype(np.float32) / 255.0
+        rotated_np = rotated_np * 2 - 1  # Normalize to [-1, 1]
+        return torch.from_numpy(rotated_np.transpose(2, 0, 1)).to(tensor.device)
+
+    def scale_tensor(self, tensor, scale):
+        """Scale tensor by given factor"""
+        if scale == 1.0:
+            return tensor
+        
+        # Use F.interpolate for scaling
+        h, w = tensor.shape[1], tensor.shape[2]
+        new_h, new_w = int(h * scale), int(w * scale)
+        scaled = F.interpolate(tensor.unsqueeze(0), size=(new_h, new_w), mode='bilinear', align_corners=False)
+        
+        # Pad or crop to original size
+        if scale > 1.0:
+            # Crop from center
+            start_h = (new_h - h) // 2
+            start_w = (new_w - w) // 2
+            scaled = scaled[:, :, start_h:start_h+h, start_w:start_w+w]
+        else:
+            # Pad with zeros
+            pad_h = (h - new_h) // 2
+            pad_w = (w - new_w) // 2
+            padded = torch.zeros(1, 3, h, w, device=tensor.device)
+            padded[:, :, pad_h:pad_h+new_h, pad_w:pad_w+new_w] = scaled
+            scaled = padded
+        
+        return scaled.squeeze(0)
+
     def __getitem__(self, idx):
         input_tensor, target_tensor = super().__getitem__(idx)
 
         if self.augment and random.random() > 0.5:
+            # Random rotation
+            if random.random() > 0.5:
+                angle = random.uniform(-15, 15)
+                input_tensor = self.rotate_tensor(input_tensor, angle)
+                target_tensor = self.rotate_tensor(target_tensor, angle)
+
+            # Random scaling
+            if random.random() > 0.5:
+                scale = random.uniform(0.8, 1.2)
+                input_tensor = self.scale_tensor(input_tensor, scale)
+                target_tensor = self.scale_tensor(target_tensor, scale)
+
             # Random horizontal flip
             if random.random() > 0.5:
                 input_tensor = torch.flip(input_tensor, [2])
@@ -58,6 +114,12 @@ class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
                 brightness_factor = random.uniform(0.8, 1.2)
                 input_tensor = torch.clamp(input_tensor * brightness_factor, -1, 1)
                 target_tensor = torch.clamp(target_tensor * brightness_factor, -1, 1)
+
+            # Random contrast adjustment
+            if random.random() > 0.5:
+                contrast_factor = random.uniform(0.8, 1.2)
+                input_tensor = torch.clamp((input_tensor - 0.5) * contrast_factor + 0.5, -1, 1)
+                target_tensor = torch.clamp((target_tensor - 0.5) * contrast_factor + 0.5, -1, 1)
 
         return input_tensor, target_tensor
 
@@ -133,10 +195,24 @@ class SSIMLoss(nn.Module):
 
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
-# Data loading - Updated to use embs_t_aligned dataset
-# train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET_SAMPLE/embs_f_aligned/train", augment=True)
-train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_f_unaligned/train/trainX_c","./MSEmb_DATASET/embs_f_unaligned/train/trainX_e")
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+# Data loading with train/validation split
+train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET_SAMPLE/embs_s_aligned/train", augment=True)
+
+# Split dataset into train and validation
+train_indices, val_indices = train_test_split(
+    range(len(train_dataset)), 
+    test_size=0.2, 
+    random_state=42
+)
+
+train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
+val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
+
+train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, num_workers=0)
+val_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=val_sampler, num_workers=0)
+
+logger.info(f"Training samples: {len(train_indices)}")
+logger.info(f"Validation samples: {len(val_indices)}")
 
 # Model initialization
 def init_weights(net, init_type='normal', init_gain=0.02):
@@ -209,19 +285,28 @@ criterion_L1 = nn.L1Loss()
 criterion_perceptual = PerceptualLoss()
 criterion_ssim = SSIMLoss()
 
-# Optimizers
-optimizer_G = optim.Adam(generator.parameters(), lr=lr, betas=(beta1, beta2))
-optimizer_D = optim.Adam(discriminator.parameters(), lr=lr, betas=(beta1, beta2))
+# Optimizers with weight decay (L2 regularization)
+optimizer_G = optim.Adam(generator.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
+optimizer_D = optim.Adam(discriminator.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
 
-# Learning rate schedulers with better scheduling
+# Enhanced learning rate schedulers
 def lambda_rule(epoch):
-    lr_l = 1.0 - max(0, epoch - 100) / 100
-    return max(lr_l, 0.1)
+    # More aggressive learning rate reduction
+    if epoch < 50:
+        return 1.0
+    elif epoch < 100:
+        return 0.5
+    elif epoch < 150:
+        return 0.2
+    elif epoch < 200:
+        return 0.1
+    else:
+        return 0.05
 
 scheduler_G = optim.lr_scheduler.LambdaLR(optimizer_G, lr_lambda=lambda_rule)
 scheduler_D = optim.lr_scheduler.LambdaLR(optimizer_D, lr_lambda=lambda_rule)
 
-# Training function with enhanced losses
+# Training function with enhanced losses and validation
 def train_epoch(epoch):
     generator.train()
     discriminator.train()
@@ -295,8 +380,6 @@ def train_epoch(epoch):
             'SSIM': f'{g_loss_ssim.item():.4f}'
         })
 
-        # Sample images will be saved after each epoch completion
-
     # Update learning rates
     scheduler_G.step()
     scheduler_D.step()
@@ -304,6 +387,23 @@ def train_epoch(epoch):
     return (total_g_loss / len(train_loader), total_d_loss / len(train_loader),
             total_l1_loss / len(train_loader), total_perceptual_loss / len(train_loader),
             total_ssim_loss / len(train_loader))
+
+# Validation function
+def validate_epoch(generator, val_loader):
+    generator.eval()
+    total_val_loss = 0
+    
+    with torch.no_grad():
+        for input_images, target_images in val_loader:
+            input_images = input_images.to(device)
+            target_images = target_images.to(device)
+            
+            fake_images = generator(input_images)
+            val_loss = criterion_L1(fake_images, target_images)
+            total_val_loss += val_loss.item()
+    
+    generator.train()
+    return total_val_loss / len(val_loader)
 
 def save_sample_images(input_images, target_images, fake_images, epoch, batch_idx):
     """Save sample images for visualization"""
@@ -418,19 +518,23 @@ def save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer
     torch.save(checkpoint, filename)
     logger.info(f'Best checkpoint saved: {filename}')
 
-# Main training loop
+# Main training loop with early stopping
 def main():
     logger.info(f"Starting improved training on device: {device}")
-    logger.info(f"Dataset: embs_t_aligned/train")
-    logger.info(f"Number of training samples: {len(train_dataset)}")
+    logger.info(f"Dataset: embs_f_aligned/train")
+    logger.info(f"Number of training samples: {len(train_indices)}")
+    logger.info(f"Number of validation samples: {len(val_indices)}")
     logger.info(f"Batch size: {batch_size}")
     logger.info(f"Number of epochs: {epochs}")
     logger.info(f"Lambda L1: {lambda_L1}")
     logger.info(f"Lambda Perceptual: {lambda_perceptual}")
     logger.info(f"Lambda SSIM: {lambda_ssim}")
+    logger.info(f"Weight decay: {weight_decay}")
+    logger.info(f"Early stopping patience: {patience}")
     logger.info("Continuing training with existing model weights...")
 
     best_l1_loss = float('inf')
+    patience_counter = 0
 
     for epoch in range(epochs):
         logger.info(f"Epoch {epoch+1}/{epochs}")
@@ -438,11 +542,34 @@ def main():
         # Train one epoch
         avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss = train_epoch(epoch)
 
+        # Validate
+        val_loss = validate_epoch(generator, val_loader)
+
         logger.info(f"Epoch {epoch+1} - G_Loss: {avg_g_loss:.4f}, D_Loss: {avg_d_loss:.4f}")
         logger.info(f"L1: {avg_l1_loss:.6f}, Perceptual: {avg_perceptual_loss:.6f}, SSIM: {avg_ssim_loss:.6f}")
+        logger.info(f"Validation L1 Loss: {val_loss:.6f}")
 
         # Save sample images after each epoch completion
         save_sample_images_epoch(generator, train_dataset, epoch)
+
+        # Early stopping logic
+        if avg_l1_loss < best_l1_loss:
+            best_l1_loss = avg_l1_loss
+            patience_counter = 0
+            # Save best model
+            torch.save(generator.state_dict(), 'checkpoints/best_generator.pth')
+            # Save best checkpoint with fixed filename (overwrites previous best)
+            save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
+                               (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss))
+            logger.info(f"Updated best model with L1 loss: {best_l1_loss:.6f}")
+        else:
+            patience_counter += 1
+            logger.info(f"No improvement for {patience_counter} epochs")
+
+        # Early stopping
+        if patience_counter >= patience:
+            logger.info(f"Early stopping at epoch {epoch+1} - no improvement for {patience} epochs")
+            break
 
         # Save first epoch model
         if epoch == 0:
@@ -455,15 +582,6 @@ def main():
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
                           (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss), prefix='epoch')
             logger.info(f"Checkpoint saved every 20 epochs at epoch {epoch + 1}")
-
-        # Save best model based on L1 loss
-        if avg_l1_loss < best_l1_loss:
-            best_l1_loss = avg_l1_loss
-            torch.save(generator.state_dict(), 'checkpoints/best_generator.pth')
-            # Save best checkpoint with fixed filename (overwrites previous best)
-            save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
-                               (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss))
-            logger.info(f"Updated best model with L1 loss: {best_l1_loss:.6f}")
 
         # Save last epoch model
         if epoch == epochs - 1:
