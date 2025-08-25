@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size =8  # Reduced for better stability
+batch_size = 10  # Reduced for better stability
 epochs = 300  # More epochs for better convergence
 lambda_L1 = 200  # Increased L1 weight
 lambda_perceptual = 10  # Perceptual loss weight
@@ -196,7 +196,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train", augment=True)
+train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_f_aligned/train", augment=True)
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(
