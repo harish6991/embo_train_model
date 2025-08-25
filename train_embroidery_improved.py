@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 10  # Reduced for better stability
+batch_size = 8  # Reduced for better stability
 epochs = 300  # More epochs for better convergence
 lambda_L1 = 200  # Increased L1 weight
 lambda_perceptual = 10  # Perceptual loss weight
