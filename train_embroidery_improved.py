@@ -196,7 +196,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_f_aligned/train", augment=True)
+train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_t_aligned/train", augment=True)
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(
