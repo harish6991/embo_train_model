@@ -40,3 +40,16 @@ class NLayerDiscriminator(nn.Module):
     def forward(self, input):
         """Standard forward."""
         return self.model(input)
+
+
+class MultiScaleDiscriminator(nn.Module):
+    def __init__(self, input_nc=3):
+        super(MultiScaleDiscriminator, self).__init__()
+        # two PatchGANs with different depth
+        self.D_35 = NLayerDiscriminator(input_nc, n_layers=2)  # ~35×35 receptive field
+        self.D_70 = NLayerDiscriminator(input_nc, n_layers=3)  # ~70×70 receptive field
+
+    def forward(self, x):
+        out_35 = self.D_35(x)
+        out_70 = self.D_70(x)
+        return out_35, out_70

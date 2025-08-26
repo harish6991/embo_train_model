@@ -19,7 +19,7 @@ from PIL import Image
 from utils.align import AlignedEmbroideryDataset
 from utils.prefixDataset import PrefixStitchDataset
 from models.test_model import UnetGenerator, UnetSkipConnectionBlock
-from models.patchGAN import NLayerDiscriminator
+from models.patchGAN import NLayerDiscriminator, MultiScaleDiscriminator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -196,7 +196,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_f_aligned/train", augment=True)
+train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train", augment=True)
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(
@@ -247,11 +247,8 @@ generator = UnetGenerator(
     use_dropout=True
 ).to(device)
 
-discriminator = NLayerDiscriminator(
-    input_nc=6,
-    ndf=64,
-    n_layers=3,
-    norm_layer=nn.BatchNorm2d
+discriminator = MultiScaleDiscriminator(
+    input_nc=6
 ).to(device)
 
 # Load existing best model if available - Updated for model continuation
@@ -270,8 +267,14 @@ if os.path.exists(existing_discriminator_path):
     logger.info(f"Loading existing discriminator from: {existing_discriminator_path}")
     checkpoint = torch.load(existing_discriminator_path, map_location=device)
     if 'discriminator_state_dict' in checkpoint:
-        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-        logger.info("Existing discriminator loaded successfully for continued training!")
+        # Try to load the state dict, but handle potential size mismatch
+        try:
+            discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            logger.info("Existing discriminator loaded successfully for continued training!")
+        except RuntimeError as e:
+            logger.warning(f"Could not load existing discriminator due to size mismatch: {e}")
+            logger.info("Initializing discriminator with random weights")
+            init_weights(discriminator)
     else:
         logger.info("No discriminator state dict found in checkpoint")
         init_weights(discriminator)
@@ -323,22 +326,31 @@ def train_epoch(epoch):
         input_images = input_images.to(device)
         target_images = target_images.to(device)
 
-        # Create labels for GAN loss
+        # Create labels for GAN loss - we'll create them dynamically based on actual output sizes
         batch_size = input_images.size(0)
-        real_labels = torch.ones(batch_size, 1, 30, 30).to(device)
-        fake_labels = torch.zeros(batch_size, 1, 30, 30).to(device)
 
         # Train Discriminator
         optimizer_D.zero_grad()
 
         # Real images
-        real_output = discriminator(torch.cat([input_images, target_images], dim=1))
-        d_loss_real = criterion_GAN(real_output, real_labels)
+        real_output_35, real_output_70 = discriminator(torch.cat([input_images, target_images], dim=1))
+
+        # Create labels dynamically based on actual output sizes
+        real_labels_35 = torch.ones_like(real_output_35)
+        fake_labels_35 = torch.zeros_like(real_output_35)
+        real_labels_70 = torch.ones_like(real_output_70)
+        fake_labels_70 = torch.zeros_like(real_output_70)
+
+        d_loss_real_35 = criterion_GAN(real_output_35, real_labels_35)
+        d_loss_real_70 = criterion_GAN(real_output_70, real_labels_70)
+        d_loss_real = (d_loss_real_35 + d_loss_real_70) * 0.5
 
         # Fake images
         fake_images = generator(input_images)
-        fake_output = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
-        d_loss_fake = criterion_GAN(fake_output, fake_labels)
+        fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
+        d_loss_fake_35 = criterion_GAN(fake_output_35, fake_labels_35)
+        d_loss_fake_70 = criterion_GAN(fake_output_70, fake_labels_70)
+        d_loss_fake = (d_loss_fake_35 + d_loss_fake_70) * 0.5
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
@@ -348,8 +360,10 @@ def train_epoch(epoch):
         optimizer_G.zero_grad()
 
         # Adversarial loss
-        fake_output = discriminator(torch.cat([input_images, fake_images], dim=1))
-        g_loss_gan = criterion_GAN(fake_output, real_labels)
+        fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images], dim=1))
+        g_loss_gan_35 = criterion_GAN(fake_output_35, real_labels_35)
+        g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)
+        g_loss_gan = (g_loss_gan_35 + g_loss_gan_70) * 0.5
 
         # L1 loss
         g_loss_l1 = criterion_L1(fake_images, target_images)
