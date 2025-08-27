@@ -45,13 +45,13 @@ class NLayerDiscriminator(nn.Module):
 class MultiScaleDiscriminator(nn.Module):
     def __init__(self, input_nc=3):
         super(MultiScaleDiscriminator, self).__init__()
-        # three PatchGANs with different depth for multi-scale discrimination
-        self.D_16 = NLayerDiscriminator(input_nc, n_layers=1)  # ~16×16 receptive field for fine details
+        # three PatchGANs with different depth
         self.D_35 = NLayerDiscriminator(input_nc, n_layers=2)  # ~35×35 receptive field
         self.D_70 = NLayerDiscriminator(input_nc, n_layers=3)  # ~70×70 receptive field
+        self.D_140 = NLayerDiscriminator(input_nc, n_layers=4)  # ~140×140 receptive field
 
     def forward(self, x):
-        out_16 = self.D_16(x)  # Fine detail discrimination
-        out_35 = self.D_35(x)  # Medium detail discrimination
-        out_70 = self.D_70(x)  # Coarse detail discrimination
-        return out_16, out_35, out_70
+        out_35 = self.D_35(x)
+        out_70 = self.D_70(x)
+        out_140 = self.D_140(x)
+        return out_35, out_70, out_140

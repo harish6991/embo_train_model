@@ -28,17 +28,15 @@ logger = logging.getLogger(__name__)
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 16  # Reduced for better stability
-epochs = 350  # Increased epochs for better convergence
-lambda_L1 = 200  # Increased L1 weight for sharper images
-lambda_perceptual = 30  # Further increased perceptual loss weight
-lambda_ssim = 20  # Increased SSIM loss weight for better structural similarity
-lambda_adversarial = 0.3  # Reduced adversarial weight further for stability
-lr = 0.00003  # Further reduced learning rate for finer tuning
-lr_discriminator = 0.00008  # Reduced discriminator learning rate
+epochs = 300  # More epochs for better convergence
+lambda_L1 = 200  # Increased L1 weight
+lambda_perceptual = 10  # Perceptual loss weight
+lambda_ssim = 5  # SSIM loss weight
+lr = 0.0001  # Slightly lower learning rate
 beta1 = 0.5
 beta2 = 0.999
-weight_decay = 2e-4  # Increased L2 regularization to reduce artifacts
-patience = 25  # Increased patience for better convergence
+weight_decay = 1e-4  # L2 regularization
+patience = 20  # Early stopping patience
 
 # Create output directories
 os.makedirs("checkpoints", exist_ok=True)
@@ -255,47 +253,34 @@ discriminator = MultiScaleDiscriminator(
 
 # Load existing best model if available - Updated for model continuation
 existing_generator_path = "checkpoints/best_generator.pth"
-existing_discriminator_path = "checkpoints/embroidery_improved_best.pth"  # Use the best checkpoint
+existing_discriminator_path = "checkpoints/embroidery_improved_epoch_39.pth"  # Use the final checkpoint
 
-# Check if we want to start fresh or continue training
-start_fresh = True  # Set to False if you want to continue from existing checkpoints
-
-if start_fresh or not os.path.exists(existing_generator_path):
-    logger.info("Starting fresh training - initializing generator with random weights")
-    init_weights(generator)
-else:
+if os.path.exists(existing_generator_path):
     logger.info(f"Loading existing generator from: {existing_generator_path}")
-    try:
-        generator.load_state_dict(torch.load(existing_generator_path, map_location=device, weights_only=False))
-        logger.info("Existing generator loaded successfully for continued training!")
-    except Exception as e:
-        logger.warning(f"Could not load existing generator: {e}")
-        logger.info("Initializing generator with random weights")
-        init_weights(generator)
-
-if start_fresh or not os.path.exists(existing_discriminator_path):
-    logger.info("Starting fresh training - initializing discriminator with random weights")
-    init_weights(discriminator)
+    generator.load_state_dict(torch.load(existing_generator_path, map_location=device))
+    logger.info("Existing generator loaded successfully for continued training!")
 else:
+    logger.info("No existing generator found, initializing with random weights")
+    init_weights(generator)
+
+if os.path.exists(existing_discriminator_path):
     logger.info(f"Loading existing discriminator from: {existing_discriminator_path}")
-    try:
-        checkpoint = torch.load(existing_discriminator_path, map_location=device, weights_only=False)
-        if 'discriminator_state_dict' in checkpoint:
-            # Try to load the state dict, but handle potential size mismatch
-            try:
-                discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-                logger.info("Existing discriminator loaded successfully for continued training!")
-            except RuntimeError as e:
-                logger.warning(f"Could not load existing discriminator due to size mismatch: {e}")
-                logger.info("Initializing discriminator with random weights")
-                init_weights(discriminator)
-        else:
-            logger.info("No discriminator state dict found in checkpoint")
+    checkpoint = torch.load(existing_discriminator_path, map_location=device)
+    if 'discriminator_state_dict' in checkpoint:
+        # Try to load the state dict, but handle potential size mismatch
+        try:
+            discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            logger.info("Existing discriminator loaded successfully for continued training!")
+        except RuntimeError as e:
+            logger.warning(f"Could not load existing discriminator due to size mismatch: {e}")
+            logger.info("Initializing discriminator with random weights")
             init_weights(discriminator)
-    except Exception as e:
-        logger.warning(f"Could not load existing discriminator checkpoint: {e}")
-        logger.info("Initializing discriminator with random weights")
+    else:
+        logger.info("No discriminator state dict found in checkpoint")
         init_weights(discriminator)
+else:
+    logger.info("No existing discriminator found, initializing with random weights")
+    init_weights(discriminator)
 
 # Loss functions
 criterion_GAN = nn.BCEWithLogitsLoss()
@@ -305,7 +290,7 @@ criterion_ssim = SSIMLoss()
 
 # Optimizers with weight decay (L2 regularization)
 optimizer_G = optim.Adam(generator.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
-optimizer_D = optim.Adam(discriminator.parameters(), lr=lr_discriminator, betas=(beta1, beta2), weight_decay=weight_decay)
+optimizer_D = optim.Adam(discriminator.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
 
 # Enhanced learning rate schedulers
 def lambda_rule(epoch):
@@ -348,28 +333,28 @@ def train_epoch(epoch):
         optimizer_D.zero_grad()
 
         # Real images
-        real_output_16, real_output_35, real_output_70 = discriminator(torch.cat([input_images, target_images], dim=1))
+        real_output_35, real_output_70, real_output_140 = discriminator(torch.cat([input_images, target_images], dim=1))
 
-        # Create labels dynamically based on actual output sizes - LSGAN labels with smoothing
-        real_labels_16 = torch.ones_like(real_output_16) * 0.9  # Label smoothing
-        fake_labels_16 = torch.zeros_like(real_output_16) + 0.1  # Label smoothing
-        real_labels_35 = torch.ones_like(real_output_35) * 0.9  # Label smoothing
-        fake_labels_35 = torch.zeros_like(real_output_35) + 0.1  # Label smoothing
-        real_labels_70 = torch.ones_like(real_output_70) * 0.9  # Label smoothing
-        fake_labels_70 = torch.zeros_like(real_output_70) + 0.1  # Label smoothing
+        # Create labels dynamically based on actual output sizes
+        real_labels_35 = torch.ones_like(real_output_35)
+        fake_labels_35 = torch.zeros_like(real_output_35)
+        real_labels_70 = torch.ones_like(real_output_70)
+        fake_labels_70 = torch.zeros_like(real_output_70)
+        real_labels_140 = torch.ones_like(real_output_140)
+        fake_labels_140 = torch.zeros_like(real_output_140)
 
-        d_loss_real_16 = criterion_GAN(real_output_16, real_labels_16)
         d_loss_real_35 = criterion_GAN(real_output_35, real_labels_35)
         d_loss_real_70 = criterion_GAN(real_output_70, real_labels_70)
-        d_loss_real = (d_loss_real_16 + d_loss_real_35 + d_loss_real_70) / 3
+        d_loss_real_140 = criterion_GAN(real_output_140, real_labels_140)
+        d_loss_real = (d_loss_real_35 + d_loss_real_70 + d_loss_real_140) / 3.0
 
         # Fake images
         fake_images = generator(input_images)
-        fake_output_16, fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
-        d_loss_fake_16 = criterion_GAN(fake_output_16, fake_labels_16)
+        fake_output_35, fake_output_70, fake_output_140 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
         d_loss_fake_35 = criterion_GAN(fake_output_35, fake_labels_35)
         d_loss_fake_70 = criterion_GAN(fake_output_70, fake_labels_70)
-        d_loss_fake = (d_loss_fake_16 + d_loss_fake_35 + d_loss_fake_70) / 3
+        d_loss_fake_140 = criterion_GAN(fake_output_140, fake_labels_140)
+        d_loss_fake = (d_loss_fake_35 + d_loss_fake_70 + d_loss_fake_140) / 3.0
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
@@ -378,22 +363,12 @@ def train_epoch(epoch):
         # Train Generator
         optimizer_G.zero_grad()
 
-        # Adversarial loss with reduced weight and emphasis on fine details
-        fake_output_16, fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images], dim=1))
-        g_loss_gan_16 = criterion_GAN(fake_output_16, real_labels_16)  # Use smoothed labels
-        g_loss_gan_35 = criterion_GAN(fake_output_35, real_labels_35)  # Use smoothed labels
-        g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)  # Use smoothed labels
-        # Give slightly more weight to 16x16 scale for fine detail emphasis
-        g_loss_gan = (1.2 * g_loss_gan_16 + g_loss_gan_35 + g_loss_gan_70) / 3.2
-
-        # Feature matching loss for better training stability
-        with torch.no_grad():
-            real_output_16, real_output_35, real_output_70 = discriminator(torch.cat([input_images, target_images], dim=1))
-
-        # Feature matching loss - encourage generator to match discriminator features at all scales
-        feature_matching_loss = F.mse_loss(fake_output_16, real_output_16.detach()) + \
-                               F.mse_loss(fake_output_35, real_output_35.detach()) + \
-                               F.mse_loss(fake_output_70, real_output_70.detach())
+        # Adversarial loss
+        fake_output_35, fake_output_70, fake_output_140 = discriminator(torch.cat([input_images, fake_images], dim=1))
+        g_loss_gan_35 = criterion_GAN(fake_output_35, real_labels_35)
+        g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)
+        g_loss_gan_140 = criterion_GAN(fake_output_140, real_labels_140)
+        g_loss_gan = (g_loss_gan_35 + g_loss_gan_70 + g_loss_gan_140) / 3.0
 
         # L1 loss
         g_loss_l1 = criterion_L1(fake_images, target_images)
@@ -404,10 +379,8 @@ def train_epoch(epoch):
         # SSIM loss
         g_loss_ssim = criterion_ssim(fake_images, target_images)
 
-        # Total generator loss with enhanced weights including feature matching
-        g_loss = lambda_adversarial * g_loss_gan + lambda_L1 * g_loss_l1 + \
-                 lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim + \
-                 0.05 * feature_matching_loss  # Reduced weight for feature matching to reduce artifacts
+        # Total generator loss with enhanced weights
+        g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim
         g_loss.backward()
         optimizer_G.step()
 
@@ -575,14 +548,9 @@ def main():
     logger.info(f"Lambda L1: {lambda_L1}")
     logger.info(f"Lambda Perceptual: {lambda_perceptual}")
     logger.info(f"Lambda SSIM: {lambda_ssim}")
-    logger.info(f"Lambda Adversarial: {lambda_adversarial}")
-    logger.info(f"Generator Learning Rate: {lr}")
-    logger.info(f"Discriminator Learning Rate: {lr_discriminator}")
     logger.info(f"Weight decay: {weight_decay}")
     logger.info(f"Early stopping patience: {patience}")
-    logger.info("Using LSGAN with enhanced losses, label smoothing, elastic augmentation...")
-    logger.info("Multi-scale discriminator: 16x16, 35x35, 70x70 receptive fields...")
-    logger.info("Continuing training with existing model weights for refinement...")
+    logger.info("Continuing training with existing model weights...")
 
     best_l1_loss = float('inf')
     patience_counter = 0
