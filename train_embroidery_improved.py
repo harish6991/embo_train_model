@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 4  # Reduced for higher resolution training
+batch_size = 16  # Increased for 32GB instance - better gradient estimates
 epochs = 500  # More epochs for better convergence
-lambda_L1 = 10  # Much more conservative to ensure stability
-lambda_perceptual = 1  # Very conservative perceptual loss weight  
-lambda_ssim = 0.5  # Conservative SSIM weight
-lambda_edge = 2  # Conservative edge loss weight
+lambda_L1 = 200  # Higher for better detail preservation with more memory
+lambda_perceptual = 10  # Increased for better texture matching
+lambda_ssim = 5  # Increased for better structural similarity
+lambda_edge = 15  # Increased for sharper edges
 lr = 0.0001  # Conservative learning rate for stability
 beta1 = 0.5
 beta2 = 0.999
@@ -218,7 +218,7 @@ class EdgePreservationLoss(nn.Module):
         edge_y_gen = F.conv2d(generated_gray, self.sobel_y.to(generated.device), padding=1)
         edge_gen = torch.sqrt(edge_x_gen**2 + edge_y_gen**2)
         
-        edge_x_target = F.conv2d(target_gray, self.sobel_y.to(target.device), padding=1)
+        edge_x_target = F.conv2d(target_gray, self.sobel_x.to(target.device), padding=1)
         edge_y_target = F.conv2d(target_gray, self.sobel_y.to(target.device), padding=1)
         edge_target = torch.sqrt(edge_x_target**2 + edge_y_target**2)
         
@@ -273,8 +273,8 @@ generator = UnetGenerator(
     input_nc=3,
     output_nc=3,
     num_downs=8,
-    ngf=80,  # Balanced for 4GB GPU memory (compromise between 64 and 128)
-    norm_layer=nn.InstanceNorm2d,  # Changed to InstanceNorm for better texture preservation
+    ngf=128,  # Increased for 32GB instance - better feature extraction
+    norm_layer=nn.InstanceNorm2d,  # InstanceNorm for better texture preservation
     use_dropout=True
 ).to(device)
 
