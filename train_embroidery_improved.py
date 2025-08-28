@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 16  # Increased for 32GB instance - better gradient estimates
 epochs = 500  # More epochs for better convergence
-lambda_L1 = 200  # Higher for better detail preservation with more memory
-lambda_perceptual = 10  # Increased for better texture matching
-lambda_ssim = 5  # Increased for better structural similarity
-lambda_edge = 15  # Increased for sharper edges
-lr = 0.0001  # Conservative learning rate for stability
+lambda_L1 = 100  # Conservative L1 weight
+lambda_perceptual = 0  # DISABLE perceptual loss temporarily for stability
+lambda_ssim = 0  # DISABLE SSIM loss temporarily for stability  
+lambda_edge = 0  # DISABLE edge loss temporarily for stability
+lr = 0.0002  # Standard learning rate
 beta1 = 0.5
 beta2 = 0.999
 weight_decay = 1e-5  # Reduced L2 regularization
@@ -273,8 +273,8 @@ generator = UnetGenerator(
     input_nc=3,
     output_nc=3,
     num_downs=8,
-    ngf=128,  # Increased for 32GB instance - better feature extraction
-    norm_layer=nn.InstanceNorm2d,  # InstanceNorm for better texture preservation
+    ngf=64,  # Back to proven stable architecture
+    norm_layer=nn.BatchNorm2d,  # Back to proven stable BatchNorm
     use_dropout=True
 ).to(device)
 
