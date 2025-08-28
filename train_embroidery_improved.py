@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 4  # Reduced for higher resolution training
 epochs = 500  # More epochs for better convergence
-lambda_L1 = 100  # Reduced to prevent gradient explosion
-lambda_perceptual = 5  # Reduced to prevent gradient explosion  
-lambda_ssim = 2  # Reduced to prevent gradient explosion
-lambda_edge = 10  # Reduced to prevent gradient explosion
-lr = 0.0002  # Standard learning rate to prevent gradient explosion
+lambda_L1 = 10  # Much more conservative to ensure stability
+lambda_perceptual = 1  # Very conservative perceptual loss weight  
+lambda_ssim = 0.5  # Conservative SSIM weight
+lambda_edge = 2  # Conservative edge loss weight
+lr = 0.0001  # Conservative learning rate for stability
 beta1 = 0.5
 beta2 = 0.999
 weight_decay = 1e-5  # Reduced L2 regularization
@@ -388,8 +388,8 @@ def train_epoch(epoch):
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
         
-        # Gradient clipping for discriminator too
-        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+        # More aggressive gradient clipping for discriminator too
+        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=0.5)
         optimizer_D.step()
 
         # Train Generator
@@ -415,10 +415,16 @@ def train_epoch(epoch):
 
         # Total generator loss with enhanced weights
         g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim + lambda_edge * g_loss_edge
+        
+        # Check for NaN and skip if found
+        if torch.isnan(g_loss):
+            logger.warning(f"NaN detected in generator loss at batch {batch_idx}, skipping...")
+            continue
+            
         g_loss.backward()
         
-        # Gradient clipping to prevent explosion
-        torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
+        # More aggressive gradient clipping to prevent explosion
+        torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=0.5)
         optimizer_G.step()
 
         # Update progress bar
