@@ -54,6 +54,8 @@ cover/
 MSEmb_DATASET_SAMPLE/
 MSEmb_DATASET/
 MSEmb_DATASET.zip
+test_final_model.py
+test_simple.py
 # Translations
 *.mo
 *.pot

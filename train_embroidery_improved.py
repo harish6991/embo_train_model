@@ -27,16 +27,17 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 4  # Reduced for better stability
-epochs = 300  # More epochs for better convergence
-lambda_L1 = 200  # Increased L1 weight
-lambda_perceptual = 10  # Perceptual loss weight
-lambda_ssim = 5  # SSIM loss weight
-lr = 0.0001  # Slightly lower learning rate
+batch_size = 8  # Reduced for higher resolution training
+epochs = 500  # More epochs for better convergence
+lambda_L1 = 400  # Increased L1 weight for better detail preservation
+lambda_perceptual = 20  # Increased perceptual loss weight
+lambda_ssim = 10  # Increased SSIM loss weight
+lambda_edge = 50  # New edge preservation loss weight
+lr = 0.00005  # Lower learning rate for fine detail training
 beta1 = 0.5
 beta2 = 0.999
-weight_decay = 1e-4  # L2 regularization
-patience = 20  # Early stopping patience
+weight_decay = 1e-5  # Reduced L2 regularization
+patience = 20  # Increased early stopping patience
 
 # Create output directories
 os.makedirs("checkpoints", exist_ok=True)
@@ -195,6 +196,36 @@ class SSIMLoss(nn.Module):
 
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
+class EdgePreservationLoss(nn.Module):
+    """Loss function to preserve edge details in generated images"""
+    def __init__(self):
+        super(EdgePreservationLoss, self).__init__()
+        # Sobel edge detection kernels
+        self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        
+    def forward(self, generated, target):
+        # Convert to grayscale for edge detection
+        if generated.size(1) == 3:
+            generated_gray = 0.299 * generated[:, 0:1, :, :] + 0.587 * generated[:, 1:2, :, :] + 0.114 * generated[:, 2:3, :, :]
+            target_gray = 0.299 * target[:, 0:1, :, :] + 0.587 * target[:, 1:2, :, :] + 0.114 * target[:, 2:3, :, :]
+        else:
+            generated_gray = generated
+            target_gray = target
+            
+        # Detect edges using Sobel operators
+        edge_x_gen = F.conv2d(generated_gray, self.sobel_x.to(generated.device), padding=1)
+        edge_y_gen = F.conv2d(generated_gray, self.sobel_y.to(generated.device), padding=1)
+        edge_gen = torch.sqrt(edge_x_gen**2 + edge_y_gen**2)
+        
+        edge_x_target = F.conv2d(target_gray, self.sobel_y.to(target.device), padding=1)
+        edge_y_target = F.conv2d(target_gray, self.sobel_y.to(target.device), padding=1)
+        edge_target = torch.sqrt(edge_x_target**2 + edge_y_target**2)
+        
+        # Calculate edge preservation loss
+        edge_loss = F.mse_loss(edge_gen, edge_target)
+        return edge_loss
+
 # Data loading with train/validation split
 train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train", augment=True)
 
@@ -237,13 +268,13 @@ def init_weights(net, init_type='normal', init_gain=0.02):
             nn.init.constant_(m.bias.data, 0.0)
     net.apply(init_func)
 
-# Initialize models
+# Initialize models with enhanced capacity
 generator = UnetGenerator(
     input_nc=3,
     output_nc=3,
     num_downs=8,
-    ngf=64,
-    norm_layer=nn.BatchNorm2d,
+    ngf=128,  # Increased from 64 to 128 for better feature extraction
+    norm_layer=nn.InstanceNorm2d,  # Changed to InstanceNorm for better texture preservation
     use_dropout=True
 ).to(device)
 
@@ -287,6 +318,7 @@ criterion_GAN = nn.BCEWithLogitsLoss()
 criterion_L1 = nn.L1Loss()
 criterion_perceptual = PerceptualLoss()
 criterion_ssim = SSIMLoss()
+criterion_edge = EdgePreservationLoss()
 
 # Optimizers with weight decay (L2 regularization)
 optimizer_G = optim.Adam(generator.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
@@ -319,6 +351,7 @@ def train_epoch(epoch):
     total_l1_loss = 0
     total_perceptual_loss = 0
     total_ssim_loss = 0
+    total_edge_loss = 0
 
     progress_bar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}')
 
@@ -374,8 +407,11 @@ def train_epoch(epoch):
         # SSIM loss
         g_loss_ssim = criterion_ssim(fake_images, target_images)
 
+        # Edge preservation loss
+        g_loss_edge = criterion_edge(fake_images, target_images)
+
         # Total generator loss with enhanced weights
-        g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim
+        g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim + lambda_edge * g_loss_edge
         g_loss.backward()
         optimizer_G.step()
 
@@ -385,13 +421,15 @@ def train_epoch(epoch):
         total_l1_loss += g_loss_l1.item()
         total_perceptual_loss += g_loss_perceptual.item()
         total_ssim_loss += g_loss_ssim.item()
+        total_edge_loss += g_loss_edge.item()
 
         progress_bar.set_postfix({
             'G_Loss': f'{g_loss.item():.4f}',
             'D_Loss': f'{d_loss.item():.4f}',
             'L1': f'{g_loss_l1.item():.4f}',
             'Perceptual': f'{g_loss_perceptual.item():.4f}',
-            'SSIM': f'{g_loss_ssim.item():.4f}'
+            'SSIM': f'{g_loss_ssim.item():.4f}',
+            'Edge': f'{g_loss_edge.item():.4f}'
         })
 
     # Update learning rates
@@ -400,7 +438,7 @@ def train_epoch(epoch):
 
     return (total_g_loss / len(train_loader), total_d_loss / len(train_loader),
             total_l1_loss / len(train_loader), total_perceptual_loss / len(train_loader),
-            total_ssim_loss / len(train_loader))
+            total_ssim_loss / len(train_loader), total_edge_loss / len(train_loader))
 
 # Validation function
 def validate_epoch(generator, val_loader):
@@ -505,7 +543,8 @@ def save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D, l
         'd_loss': losses[1],
         'l1_loss': losses[2],
         'perceptual_loss': losses[3],
-        'ssim_loss': losses[4]
+        'ssim_loss': losses[4],
+        'edge_loss': losses[5]
     }
 
     filename = f'checkpoints/embroidery_improved_{prefix}_{epoch}.pth'
@@ -524,7 +563,8 @@ def save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer
         'd_loss': losses[1],
         'l1_loss': losses[2],
         'perceptual_loss': losses[3],
-        'ssim_loss': losses[4]
+        'ssim_loss': losses[4],
+        'edge_loss': losses[5]
     }
 
     # Always use the same filename for best checkpoint
@@ -543,6 +583,7 @@ def main():
     logger.info(f"Lambda L1: {lambda_L1}")
     logger.info(f"Lambda Perceptual: {lambda_perceptual}")
     logger.info(f"Lambda SSIM: {lambda_ssim}")
+    logger.info(f"Lambda Edge: {lambda_edge}")
     logger.info(f"Weight decay: {weight_decay}")
     logger.info(f"Early stopping patience: {patience}")
     logger.info("Continuing training with existing model weights...")
@@ -554,13 +595,13 @@ def main():
         logger.info(f"Epoch {epoch+1}/{epochs}")
 
         # Train one epoch
-        avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss = train_epoch(epoch)
+        avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss, avg_edge_loss = train_epoch(epoch)
 
         # Validate
         val_loss = validate_epoch(generator, val_loader)
 
         logger.info(f"Epoch {epoch+1} - G_Loss: {avg_g_loss:.4f}, D_Loss: {avg_d_loss:.4f}")
-        logger.info(f"L1: {avg_l1_loss:.6f}, Perceptual: {avg_perceptual_loss:.6f}, SSIM: {avg_ssim_loss:.6f}")
+        logger.info(f"L1: {avg_l1_loss:.6f}, Perceptual: {avg_perceptual_loss:.6f}, SSIM: {avg_ssim_loss:.6f}, Edge: {avg_edge_loss:.6f}")
         logger.info(f"Validation L1 Loss: {val_loss:.6f}")
 
         # Save sample images after each epoch completion
@@ -574,7 +615,7 @@ def main():
             torch.save(generator.state_dict(), 'checkpoints/best_generator.pth')
             # Save best checkpoint with fixed filename (overwrites previous best)
             save_best_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
-                               (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss))
+                               (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss, avg_edge_loss))
             logger.info(f"Updated best model with L1 loss: {best_l1_loss:.6f}")
         else:
             patience_counter += 1
@@ -588,19 +629,19 @@ def main():
         # Save first epoch model
         if epoch == 0:
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
-                          (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss))
+                          (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss, avg_edge_loss))
             logger.info(f"First epoch model saved")
 
         # Save checkpoint every 20 epochs
         if (epoch + 1) % 20 == 0:
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
-                          (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss), prefix='epoch')
+                          (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss, avg_edge_loss), prefix='epoch')
             logger.info(f"Checkpoint saved every 20 epochs at epoch {epoch + 1}")
 
         # Save last epoch model
         if epoch == epochs - 1:
             save_checkpoint(epoch, generator, discriminator, optimizer_G, optimizer_D,
-                          (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss), prefix='final')
+                          (avg_g_loss, avg_d_loss, avg_l1_loss, avg_perceptual_loss, avg_ssim_loss, avg_edge_loss), prefix='final')
             logger.info(f"Final epoch model saved")
 
 if __name__ == "__main__":
