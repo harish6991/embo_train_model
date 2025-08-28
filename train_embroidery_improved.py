@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 8  # Reduced for higher resolution training
+batch_size = 4  # Reduced for higher resolution training
 epochs = 500  # More epochs for better convergence
-lambda_L1 = 400  # Increased L1 weight for better detail preservation
-lambda_perceptual = 20  # Increased perceptual loss weight
-lambda_ssim = 10  # Increased SSIM loss weight
-lambda_edge = 50  # New edge preservation loss weight
-lr = 0.00005  # Lower learning rate for fine detail training
+lambda_L1 = 100  # Reduced to prevent gradient explosion
+lambda_perceptual = 5  # Reduced to prevent gradient explosion  
+lambda_ssim = 2  # Reduced to prevent gradient explosion
+lambda_edge = 10  # Reduced to prevent gradient explosion
+lr = 0.0002  # Standard learning rate to prevent gradient explosion
 beta1 = 0.5
 beta2 = 0.999
 weight_decay = 1e-5  # Reduced L2 regularization
@@ -273,7 +273,7 @@ generator = UnetGenerator(
     input_nc=3,
     output_nc=3,
     num_downs=8,
-    ngf=128,  # Increased from 64 to 128 for better feature extraction
+    ngf=80,  # Balanced for 4GB GPU memory (compromise between 64 and 128)
     norm_layer=nn.InstanceNorm2d,  # Changed to InstanceNorm for better texture preservation
     use_dropout=True
 ).to(device)
@@ -387,6 +387,9 @@ def train_epoch(epoch):
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
+        
+        # Gradient clipping for discriminator too
+        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
         optimizer_D.step()
 
         # Train Generator
@@ -413,6 +416,9 @@ def train_epoch(epoch):
         # Total generator loss with enhanced weights
         g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim + lambda_edge * g_loss_edge
         g_loss.backward()
+        
+        # Gradient clipping to prevent explosion
+        torch.nn.utils.clip_grad_norm_(generator.parameters(), max_norm=1.0)
         optimizer_G.step()
 
         # Update progress bar
