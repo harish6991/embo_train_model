@@ -20,6 +20,7 @@ from utils.align import AlignedEmbroideryDataset
 from utils.prefixDataset import PrefixStitchDataset
 from models.test_model import UnetGenerator, UnetSkipConnectionBlock
 from models.patchGAN import NLayerDiscriminator, MultiScaleDiscriminator
+from utils.losses import CharbonnierLoss
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -29,9 +30,12 @@ logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 batch_size = 16  # Reduced for better stability
 epochs = 300  # More epochs for better convergence
-lambda_L1 = 200  # Increased L1 weight
-lambda_perceptual = 10  # Perceptual loss weight
-lambda_ssim = 5  # SSIM loss weight
+# PSNR-focused configuration: Heavy L2 weighting
+lambda_L1 = 20   # Minimal L1 weight
+lambda_L2 = 160  # Dominant L2 weight (80% of total ~200)
+lambda_perceptual = 5   # Reduced perceptual weight
+lambda_ssim = 5  # Reduced SSIM weight  
+lambda_charbonnier = 20  # Supporting Charbonnier weight (10% of total)
 lr = 0.0001  # Slightly lower learning rate
 beta1 = 0.5
 beta2 = 0.999
@@ -285,8 +289,10 @@ else:
 # Loss functions
 criterion_GAN = nn.BCEWithLogitsLoss()
 criterion_L1 = nn.L1Loss()
+criterion_L2 = nn.MSELoss()  # L2 loss for structural preservation
 criterion_perceptual = PerceptualLoss()
 criterion_ssim = SSIMLoss()
+criterion_charbonnier = CharbonnierLoss(eps=1e-6)  # Smooth L1 loss
 
 # Optimizers with weight decay (L2 regularization)
 optimizer_G = optim.Adam(generator.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=weight_decay)
@@ -317,6 +323,8 @@ def train_epoch(epoch):
     total_g_loss = 0
     total_d_loss = 0
     total_l1_loss = 0
+    total_l2_loss = 0
+    total_charbonnier_loss = 0
     total_perceptual_loss = 0
     total_ssim_loss = 0
 
@@ -367,6 +375,12 @@ def train_epoch(epoch):
 
         # L1 loss
         g_loss_l1 = criterion_L1(fake_images, target_images)
+        
+        # L2 loss for structural preservation
+        g_loss_l2 = criterion_L2(fake_images, target_images)
+        
+        # Charbonnier loss for smooth reconstruction
+        g_loss_charbonnier = criterion_charbonnier(fake_images, target_images)
 
         # Perceptual loss
         g_loss_perceptual = criterion_perceptual(fake_images, target_images)
@@ -375,7 +389,12 @@ def train_epoch(epoch):
         g_loss_ssim = criterion_ssim(fake_images, target_images)
 
         # Total generator loss with enhanced weights
-        g_loss = g_loss_gan + lambda_L1 * g_loss_l1 + lambda_perceptual * g_loss_perceptual + lambda_ssim * g_loss_ssim
+        g_loss = (g_loss_gan + 
+                 lambda_L1 * g_loss_l1 + 
+                 lambda_L2 * g_loss_l2 +
+                 lambda_charbonnier * g_loss_charbonnier +
+                 lambda_perceptual * g_loss_perceptual + 
+                 lambda_ssim * g_loss_ssim)
         g_loss.backward()
         optimizer_G.step()
 
@@ -383,6 +402,8 @@ def train_epoch(epoch):
         total_g_loss += g_loss.item()
         total_d_loss += d_loss.item()
         total_l1_loss += g_loss_l1.item()
+        total_l2_loss += g_loss_l2.item()
+        total_charbonnier_loss += g_loss_charbonnier.item()
         total_perceptual_loss += g_loss_perceptual.item()
         total_ssim_loss += g_loss_ssim.item()
 
@@ -541,8 +562,11 @@ def main():
     logger.info(f"Batch size: {batch_size}")
     logger.info(f"Number of epochs: {epochs}")
     logger.info(f"Lambda L1: {lambda_L1}")
+    logger.info(f"Lambda L2: {lambda_L2}")
+    logger.info(f"Lambda Charbonnier: {lambda_charbonnier}")
     logger.info(f"Lambda Perceptual: {lambda_perceptual}")
     logger.info(f"Lambda SSIM: {lambda_ssim}")
+    logger.info("PSNR-focused training: 80% L2 + 10% Charbonnier + 10% others")
     logger.info(f"Weight decay: {weight_decay}")
     logger.info(f"Early stopping patience: {patience}")
     logger.info("Continuing training with existing model weights...")
