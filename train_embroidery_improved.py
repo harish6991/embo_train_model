@@ -14,6 +14,8 @@ import random
 from math import exp
 from sklearn.model_selection import train_test_split
 from PIL import Image
+import matplotlib.pyplot as plt
+import torchvision.transforms as T
 
 # Import custom modules
 from utils.align import AlignedEmbroideryDataset
@@ -43,86 +45,6 @@ os.makedirs("checkpoints", exist_ok=True)
 os.makedirs("sample_images", exist_ok=True)
 
 # Enhanced data loading with comprehensive augmentation
-class AugmentedEmbroideryDataset(AlignedEmbroideryDataset):
-    def __init__(self, root_dir, image_size=256, augment=True):
-        super().__init__(root_dir, image_size)
-        self.augment = augment
-
-    def rotate_tensor(self, tensor, angle):
-        """Rotate tensor by given angle"""
-        if angle == 0:
-            return tensor
-
-        # Convert to PIL, rotate, convert back
-        tensor_np = tensor.cpu().numpy().transpose(1, 2, 0)
-        tensor_np = (tensor_np + 1) / 2  # Denormalize to [0, 1]
-        tensor_pil = Image.fromarray((tensor_np * 255).astype(np.uint8))
-        rotated_pil = tensor_pil.rotate(angle, resample=Image.BILINEAR)
-        rotated_np = np.array(rotated_pil).astype(np.float32) / 255.0
-        rotated_np = rotated_np * 2 - 1  # Normalize to [-1, 1]
-        return torch.from_numpy(rotated_np.transpose(2, 0, 1)).to(tensor.device)
-
-    def scale_tensor(self, tensor, scale):
-        """Scale tensor by given factor"""
-        if scale == 1.0:
-            return tensor
-
-        # Use F.interpolate for scaling
-        h, w = tensor.shape[1], tensor.shape[2]
-        new_h, new_w = int(h * scale), int(w * scale)
-        scaled = F.interpolate(tensor.unsqueeze(0), size=(new_h, new_w), mode='bilinear', align_corners=False)
-
-        # Pad or crop to original size
-        if scale > 1.0:
-            # Crop from center
-            start_h = (new_h - h) // 2
-            start_w = (new_w - w) // 2
-            scaled = scaled[:, :, start_h:start_h+h, start_w:start_w+w]
-        else:
-            # Pad with zeros
-            pad_h = (h - new_h) // 2
-            pad_w = (w - new_w) // 2
-            padded = torch.zeros(1, 3, h, w, device=tensor.device)
-            padded[:, :, pad_h:pad_h+new_h, pad_w:pad_w+new_w] = scaled
-            scaled = padded
-
-        return scaled.squeeze(0)
-
-    def __getitem__(self, idx):
-        input_tensor, target_tensor = super().__getitem__(idx)
-
-        if self.augment and random.random() > 0.5:
-            # Random rotation
-            if random.random() > 0.5:
-                angle = random.uniform(-15, 15)
-                input_tensor = self.rotate_tensor(input_tensor, angle)
-                target_tensor = self.rotate_tensor(target_tensor, angle)
-
-            # Random scaling
-            if random.random() > 0.5:
-                scale = random.uniform(0.8, 1.2)
-                input_tensor = self.scale_tensor(input_tensor, scale)
-                target_tensor = self.scale_tensor(target_tensor, scale)
-
-            # Random horizontal flip
-            if random.random() > 0.5:
-                input_tensor = torch.flip(input_tensor, [2])
-                target_tensor = torch.flip(target_tensor, [2])
-
-            # Random brightness adjustment
-            if random.random() > 0.5:
-                brightness_factor = random.uniform(0.8, 1.2)
-                input_tensor = torch.clamp(input_tensor * brightness_factor, -1, 1)
-                target_tensor = torch.clamp(target_tensor * brightness_factor, -1, 1)
-
-            # Random contrast adjustment
-            if random.random() > 0.5:
-                contrast_factor = random.uniform(0.8, 1.2)
-                input_tensor = torch.clamp((input_tensor - 0.5) * contrast_factor + 0.5, -1, 1)
-                target_tensor = torch.clamp((target_tensor - 0.5) * contrast_factor + 0.5, -1, 1)
-
-        return input_tensor, target_tensor
-
 # Enhanced loss functions
 class PerceptualLoss(nn.Module):
     def __init__(self):
@@ -196,14 +118,21 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = AugmentedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train", augment=True)
+train_dataset = AlignedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train")
+
+to_pil = T.ToPILImage()
+
+inp, tgt, mask = train_dataset[0]
+
+
+to_pil = T.ToPILImage()
+
+inp, tgt, mask = train_dataset[0]
+
 
 # Split dataset into train and validation
-train_indices, val_indices = train_test_split(
-    range(len(train_dataset)),
-    test_size=0.2,
-    random_state=42
-)
+train_indices, val_indices = train_test_split(range(len(train_dataset)),test_size=0.1, random_state=42)
+
 
 train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
 val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
@@ -241,14 +170,14 @@ def init_weights(net, init_type='normal', init_gain=0.02):
 generator = UnetGenerator(
     input_nc=3,
     output_nc=3,
-    num_downs=8,
+    num_downs=6,
     ngf=64,
     norm_layer=nn.BatchNorm2d,
     use_dropout=True
 ).to(device)
 
 discriminator = MultiScaleDiscriminator(
-    input_nc=6
+    input_nc=6  # 3 channels input + 3 channels target
 ).to(device)
 
 # Load existing best model if available - Updated for model continuation
@@ -284,7 +213,7 @@ else:
 
 # Loss functions
 criterion_GAN = nn.BCEWithLogitsLoss()
-criterion_L1 = nn.L1Loss()
+criterion_L1 = nn.L1Loss(reduction="none")  # Changed to "none" for masked loss
 criterion_perceptual = PerceptualLoss()
 criterion_ssim = SSIMLoss()
 
@@ -322,9 +251,8 @@ def train_epoch(epoch):
 
     progress_bar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}')
 
-    for batch_idx, (input_images, target_images) in enumerate(progress_bar):
-        input_images = input_images.to(device)
-        target_images = target_images.to(device)
+    for batch_idx, batch in enumerate(progress_bar):
+        input_images, target_images, mask = [x.to(device) for x in batch]  # [B,3,H,W], [B,3,H,W], [B,1,H,W]
 
         # Create labels for GAN loss - we'll create them dynamically based on actual output sizes
         batch_size = input_images.size(0)
@@ -365,8 +293,14 @@ def train_epoch(epoch):
         g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)
         g_loss_gan = (g_loss_gan_35 + g_loss_gan_70) * 0.5
 
-        # L1 loss
-        g_loss_l1 = criterion_L1(fake_images, target_images)
+        # L1 loss with provided mask
+        loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]
+        
+        # Expand mask to match 3 channels
+        mask_expanded = mask.expand_as(fake_images)  # [B,3,H,W]
+        
+        # Compute masked loss
+        g_loss_l1 = (loss_map * mask_expanded).sum() / (mask_expanded.sum() + 1e-8)
 
         # Perceptual loss
         g_loss_perceptual = criterion_perceptual(fake_images, target_images)
@@ -408,12 +342,16 @@ def validate_epoch(generator, val_loader):
     total_val_loss = 0
 
     with torch.no_grad():
-        for input_images, target_images in val_loader:
-            input_images = input_images.to(device)
-            target_images = target_images.to(device)
+        for batch in val_loader:
+            input_images, target_images, mask = [x.to(device) for x in batch]  # [B,3,H,W], [B,3,H,W], [B,1,H,W]
 
             fake_images = generator(input_images)
-            val_loss = criterion_L1(fake_images, target_images)
+            
+            # Masked validation loss
+            loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]
+            mask_expanded = mask.expand_as(fake_images)  # [B,3,H,W]
+            val_loss = (loss_map * mask_expanded).sum() / (mask_expanded.sum() + 1e-8)
+            
             total_val_loss += val_loss.item()
 
     generator.train()
@@ -457,7 +395,7 @@ def save_sample_images_epoch(generator, dataset, epoch):
         sample_indices = [0, len(dataset)//2, len(dataset)-1] if len(dataset) >= 3 else [0]
 
         for i, idx in enumerate(sample_indices):
-            input_img, target_img = dataset[idx]
+            input_img, target_img, mask = dataset[idx]
             input_img = input_img.unsqueeze(0).to(device)
 
             # Generate fake image
