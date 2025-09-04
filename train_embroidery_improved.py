@@ -274,7 +274,7 @@ def train_epoch(epoch):
         d_loss_real_35 = criterion_GAN(real_output_35, real_labels_35)
         d_loss_real_70 = criterion_GAN(real_output_70, real_labels_70)
         d_loss_real_140 = criterion_GAN(real_output_140, real_labels_140)
-        d_loss_real = (d_loss_real_35 + d_loss_real_70 + d_loss_real_140) / 3.0
+        d_loss_real = (d_loss_real_35 *0.2 + d_loss_real_70 *0.4 + d_loss_real_140 *0.4)
 
         # Fake images
         fake_images = generator(input_images)
