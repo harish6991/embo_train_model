@@ -274,7 +274,7 @@ def train_epoch(epoch):
         d_loss_real_35 = criterion_GAN(real_output_35, real_labels_35)
         d_loss_real_70 = criterion_GAN(real_output_70, real_labels_70)
         d_loss_real_140 = criterion_GAN(real_output_140, real_labels_140)
-        d_loss_real = (d_loss_real_35 *0.2 + d_loss_real_70 *0.2 + d_loss_real_140 *0.6)
+        d_loss_real = (d_loss_real_35 *0.3 + d_loss_real_70 *0.6 + d_loss_real_140 *0.1)
 
         # Fake images
         fake_images = generator(input_images)
@@ -300,10 +300,10 @@ def train_epoch(epoch):
 
         # L1 loss with provided mask
         loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]
-        
+
         # Expand mask to match 3 channels
         mask_expanded = mask.expand_as(fake_images)  # [B,3,H,W]
-        
+
         # Compute masked loss
         g_loss_l1 = (loss_map * mask_expanded).sum() / (mask_expanded.sum() + 1e-8)
 
@@ -351,12 +351,12 @@ def validate_epoch(generator, val_loader):
             input_images, target_images, mask = [x.to(device) for x in batch]  # [B,3,H,W], [B,3,H,W], [B,1,H,W]
 
             fake_images = generator(input_images)
-            
+
             # Masked validation loss
             loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]
             mask_expanded = mask.expand_as(fake_images)  # [B,3,H,W]
             val_loss = (loss_map * mask_expanded).sum() / (mask_expanded.sum() + 1e-8)
-            
+
             total_val_loss += val_loss.item()
 
     generator.train()
