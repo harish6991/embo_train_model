@@ -13,87 +13,139 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 # ----------------------------
-# Auto-mask function (entropy + edges)
+# IMPROVED Auto-mask function (better for embroidery details)
 # ----------------------------
-def auto_mask(img):
-    """Generate mask from image using entropy and edge detection"""
+def auto_mask_improved(img):
+    """Improved mask generation with better embroidery detail capture"""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray_uint8 = (gray / gray.max() * 255).astype(np.uint8)
 
-    ent = entropy(gray_uint8, disk(5)).astype(np.float32)
-    ent = (ent - ent.min()) / (ent.max() - ent.min() + 1e-9)
+    # Multiple entropy scales for different detail levels
+    ent_fine = entropy(gray_uint8, disk(3)).astype(np.float32)  # Fine details
+    ent_coarse = entropy(gray_uint8, disk(7)).astype(np.float32)  # Coarse patterns
+    
+    # Normalize entropy maps
+    ent_fine = (ent_fine - ent_fine.min()) / (ent_fine.max() - ent_fine.min() + 1e-9)
+    ent_coarse = (ent_coarse - ent_coarse.min()) / (ent_coarse.max() - ent_coarse.min() + 1e-9)
 
+    # Multiple edge detection methods
     lap = cv2.Laplacian(gray, cv2.CV_32F)
     lap = np.abs(lap)
     lap = (lap - lap.min()) / (lap.max() - lap.min() + 1e-9)
+    
+    # Sobel edges for better embroidery boundaries
+    sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    sobel = np.sqrt(sobelx**2 + sobely**2)
+    sobel = (sobel - sobel.min()) / (sobel.max() - sobel.min() + 1e-9)
 
-    mask = 0.6 * ent + 0.4 * lap
-    mask = cv2.GaussianBlur(mask, (7, 7), 0)
+    # Combine features with better weights for embroidery
+    mask = 0.4 * ent_fine + 0.3 * ent_coarse + 0.2 * lap + 0.1 * sobel
+    
+    # Less aggressive smoothing to preserve details
+    mask = cv2.GaussianBlur(mask, (3, 3), 0)
+    
+    # Enhanced contrast for sharper masks
+    mask = np.power(mask, 0.8)  # Gamma correction for better contrast
+    
     return np.clip(mask, 0, 1)
 
 
 # ----------------------------
-# Mask Generator (Fixed Architecture)
+# IMPROVED Mask Generator with Skip Connections
 # ----------------------------
-class MaskGenerator(nn.Module):
-    """Generator that produces masks from input images"""
+class ImprovedMaskGenerator(nn.Module):
+    """Improved generator with skip connections for better detail preservation"""
     def __init__(self, input_channels=3, output_channels=1):
         super().__init__()
-        self.net = nn.Sequential(
-            # Encoder
-            nn.Conv2d(input_channels, 64, 4, stride=2, padding=1),  # 128x128
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(64, 128, 4, stride=2, padding=1),  # 64x64
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(128, 256, 4, stride=2, padding=1),  # 32x32
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(256, 512, 4, stride=2, padding=1),  # 16x16
-            nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2),
-
-            # Decoder
-            nn.ConvTranspose2d(512, 256, 4, stride=2, padding=1),  # 32x32
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),  # 64x64
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),  # 128x128
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, output_channels, 4, stride=2, padding=1),  # 256x256
-            nn.Sigmoid()  # Output mask values between 0 and 1
+        
+        # Encoder with skip connections
+        self.enc1 = self._make_layer(input_channels, 64)
+        self.enc2 = self._make_layer(64, 128)
+        self.enc3 = self._make_layer(128, 256)
+        self.enc4 = self._make_layer(256, 512)
+        
+        # Bottleneck
+        self.bottleneck = self._make_layer(512, 1024)
+        
+        # Decoder with skip connections
+        self.dec4 = self._make_decoder_layer(1024 + 512, 512)
+        self.dec3 = self._make_decoder_layer(512 + 256, 256)
+        self.dec2 = self._make_decoder_layer(256 + 128, 128)
+        self.dec1 = self._make_decoder_layer(128 + 64, 64)
+        
+        # Final output layer
+        self.final = nn.Sequential(
+            nn.Conv2d(64, output_channels, 1),
+            nn.Sigmoid()
         )
-
+        
+        # Pooling and upsampling
+        self.pool = nn.MaxPool2d(2)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+    
+    def _make_layer(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _make_decoder_layer(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+    
     def forward(self, x):
-        return self.net(x)
+        # Encoder with skip connections
+        e1 = self.enc1(x)
+        e2 = self.enc2(self.pool(e1))
+        e3 = self.enc3(self.pool(e2))
+        e4 = self.enc4(self.pool(e3))
+        
+        # Bottleneck
+        bottleneck = self.bottleneck(self.pool(e4))
+        
+        # Decoder with skip connections
+        d4 = self.dec4(torch.cat([self.upsample(bottleneck), e4], dim=1))
+        d3 = self.dec3(torch.cat([self.upsample(d4), e3], dim=1))
+        d2 = self.dec2(torch.cat([self.upsample(d3), e2], dim=1))
+        d1 = self.dec1(torch.cat([self.upsample(d2), e1], dim=1))
+        
+        return self.final(d1)
 
 
 # ----------------------------
-# Custom Dataset for Mask Training
+# IMPROVED Dataset
 # ----------------------------
-class MaskTrainingDataset:
-    """Dataset that generates training pairs of (image, auto_generated_mask)"""
+class ImprovedMaskDataset:
+    """Dataset with improved mask generation"""
     def __init__(self, image_dir, image_size=256):
         self.image_dir = image_dir
         self.image_size = image_size
-
+        
         # Get all image files
         self.image_files = [
-            os.path.join(image_dir, f) for f in os.listdir(image_dir)
+            os.path.join(image_dir, f) for f in os.listdir(image_dir) 
             if f.lower().endswith((".png", ".jpg", ".jpeg"))
         ]
         self.image_files.sort()
-
+        
         # Transform for images
         self.transform = T.Compose([
             T.Resize((image_size, image_size)),
             T.ToTensor(),
             T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # [-1, 1]
         ])
-
+        
         # Transform for masks
         self.mask_transform = T.Compose([
             T.Resize((image_size, image_size)),
@@ -108,72 +160,100 @@ class MaskTrainingDataset:
         img_path = self.image_files[idx]
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        # Generate auto mask
-        mask_np = auto_mask(img)  # [H, W]
-
+        
+        # Generate improved auto mask
+        mask_np = auto_mask_improved(img)  # [H, W]
+        
         # Convert to PIL for transforms
-        from PIL import Image
         img_pil = Image.fromarray(img)
         mask_pil = Image.fromarray((mask_np * 255).astype(np.uint8))
-
+        
         # Apply transforms
         img_tensor = self.transform(img_pil)
         mask_tensor = self.mask_transform(mask_pil)
-
+        
         return img_tensor, mask_tensor
 
 
 # ----------------------------
-# Loss Functions
+# IMPROVED Loss Functions
 # ----------------------------
-def dice_loss(pred, target, smooth=1e-6):
-    """Dice loss for mask prediction"""
-    pred = pred.view(-1)
-    target = target.view(-1)
+def focal_loss(pred, target, alpha=0.25, gamma=2.0):
+    """Focal loss for better handling of hard examples"""
+    bce = F.binary_cross_entropy(pred, target, reduction='none')
+    pt = torch.exp(-bce)
+    focal = alpha * (1 - pt) ** gamma * bce
+    return focal.mean()
 
-    intersection = (pred * target).sum()
-    dice = (2. * intersection + smooth) / (pred.sum() + target.sum() + smooth)
+def edge_loss(pred, target):
+    """Edge-aware loss to preserve boundaries"""
+    # Compute gradients
+    pred_grad_x = torch.abs(pred[:, :, :, :-1] - pred[:, :, :, 1:])
+    pred_grad_y = torch.abs(pred[:, :, :-1, :] - pred[:, :, 1:, :])
+    
+    target_grad_x = torch.abs(target[:, :, :, :-1] - target[:, :, :, 1:])
+    target_grad_y = torch.abs(target[:, :, :-1, :] - target[:, :, 1:, :])
+    
+    edge_loss_x = F.mse_loss(pred_grad_x, target_grad_x)
+    edge_loss_y = F.mse_loss(pred_grad_y, target_grad_y)
+    
+    return edge_loss_x + edge_loss_y
 
-    return 1 - dice
-
-def combined_mask_loss(pred, target):
-    """Combined loss for mask prediction"""
+def improved_mask_loss(pred, target):
+    """Improved combined loss for better embroidery masks"""
+    # Standard losses
     bce = F.binary_cross_entropy(pred, target)
-    dice = dice_loss(pred, target)
-    return bce + dice
+    
+    # Dice loss
+    smooth = 1e-6
+    pred_flat = pred.view(-1)
+    target_flat = target.view(-1)
+    intersection = (pred_flat * target_flat).sum()
+    dice = (2. * intersection + smooth) / (pred_flat.sum() + target_flat.sum() + smooth)
+    dice_loss = 1 - dice
+    
+    # Focal loss for hard examples
+    focal = focal_loss(pred, target)
+    
+    # Edge-aware loss
+    edge = edge_loss(pred, target)
+    
+    # Combined loss with better weights
+    total_loss = 0.3 * bce + 0.3 * dice_loss + 0.2 * focal + 0.2 * edge
+    
+    return total_loss
 
 
 # ----------------------------
 # Visualization Functions
 # ----------------------------
-def save_mask_comparison(input_img, target_mask, pred_mask, epoch, batch_idx, sample_idx, save_dir):
-    """Save comparison of input image, target mask, and predicted mask"""
+def save_improved_comparison(input_img, target_mask, pred_mask, epoch, batch_idx, sample_idx, save_dir):
+    """Save comparison with better visualization"""
     # Convert tensors to numpy and denormalize
     input_np = input_img.cpu().detach().numpy().transpose(1, 2, 0)
     input_np = (input_np * 0.5 + 0.5)  # Denormalize from [-1,1] to [0,1]
     input_np = np.clip(input_np, 0, 1)
-
+    
     target_np = target_mask.cpu().detach().numpy().squeeze()
     pred_np = pred_mask.cpu().detach().numpy().squeeze()
-
+    
     # Create comparison plot
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
+    
     axes[0].imshow(input_np)
-    axes[0].set_title('Input Image')
+    axes[0].set_title('Original Image')
     axes[0].axis('off')
-
-    axes[1].imshow(target_np, cmap='gray')
-    axes[1].set_title('Target Mask (Auto-generated)')
+    
+    axes[1].imshow(target_np, cmap='gray', vmin=0, vmax=1)
+    axes[1].set_title('Target (Improved Auto-mask)')
     axes[1].axis('off')
-
-    axes[2].imshow(pred_np, cmap='gray')
-    axes[2].set_title('Predicted Mask')
+    
+    axes[2].imshow(pred_np, cmap='gray', vmin=0, vmax=1)
+    axes[2].set_title('AI Prediction')
     axes[2].axis('off')
-
+    
     plt.tight_layout()
-    plt.savefig(f'{save_dir}/epoch_{epoch}_batch_{batch_idx}_sample_{sample_idx}.png',
+    plt.savefig(f'{save_dir}/improved_epoch_{epoch}_batch_{batch_idx}_sample_{sample_idx}.png', 
                 dpi=150, bbox_inches='tight')
     plt.close()
 
@@ -181,134 +261,126 @@ def save_individual_masks(pred_masks, epoch, batch_idx, save_dir):
     """Save individual predicted masks as separate images"""
     mask_dir = os.path.join(save_dir, f'epoch_{epoch}')
     os.makedirs(mask_dir, exist_ok=True)
-
+    
     for i, mask in enumerate(pred_masks):
         mask_np = mask.cpu().detach().numpy().squeeze()
         mask_img = (mask_np * 255).astype(np.uint8)
-
+        
         # Save as PIL image
         mask_pil = Image.fromarray(mask_img, mode='L')
         mask_pil.save(f'{mask_dir}/batch_{batch_idx}_mask_{i}.png')
 
 
 # ----------------------------
-# Training Setup
+# MAIN TRAINING SCRIPT
 # ----------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-# Initialize model
-mask_generator = MaskGenerator().to(device)
-
-# Create output directories
-os.makedirs("mask_checkpoints", exist_ok=True)
-os.makedirs("generated_masks", exist_ok=True)
-os.makedirs("mask_comparisons", exist_ok=True)
-
-# Create dataset and dataloader
-# Note: Update this path to your actual dataset path
-dataset_path = "./MSEmb_DATASET/embs_s_unaligned/train/trainX_e"  # Update this path
-if os.path.exists(dataset_path):
-    dataset = MaskTrainingDataset(dataset_path)
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0)
-    print(f"Dataset loaded with {len(dataset)} images")
-else:
-    print(f"Dataset path {dataset_path} not found. Using dummy data for demonstration.")
-    # Fallback to dummy data if dataset not found
-    dataset = None
-    dataloader = None
-
-# Optimizer
-optimizer = torch.optim.Adam(mask_generator.parameters(), lr=1e-4)
-
-# Training loop
-epochs = 200
-
-print("Starting mask generation training...")
-print(f"Generated masks will be saved in: ./generated_masks/")
-print(f"Mask comparisons will be saved in: ./mask_comparisons/")
-
-for epoch in range(epochs):
-    if dataloader is None:
-        # Dummy training loop for demonstration
-        print(f"Epoch {epoch+1}/{epochs} - Using dummy data")
-
-        # Create dummy input and target
-        dummy_img = torch.randn(2, 3, 256, 256).to(device)
-        dummy_mask = torch.rand(2, 1, 256, 256).to(device)
-
-        # Forward pass
-        pred_mask = mask_generator(dummy_img)
-        loss = combined_mask_loss(pred_mask, dummy_mask)
-
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        print(f"Loss: {loss.item():.4f}")
-
-        # Save dummy masks for visualization
-        if (epoch + 1) % 5 == 0:  # Save every 5 epochs
-            save_individual_masks(pred_mask, epoch+1, 0, "generated_masks")
-            print(f"Dummy masks saved for epoch {epoch+1}")
-
+def main():
+    print("🚀 IMPROVED MASK GENERATOR TRAINING")
+    print("="*60)
+    
+    # Setup
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    
+    # Create directories
+    os.makedirs("improved_checkpoints", exist_ok=True)
+    os.makedirs("improved_masks", exist_ok=True)
+    os.makedirs("improved_comparisons", exist_ok=True)
+    
+    # Dataset
+    dataset_path = "./MSEmb_DATASET/embs_s_unaligned/train/trainX_e"
+    if os.path.exists(dataset_path):
+        dataset = ImprovedMaskDataset(dataset_path)
+        dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0)
+        print(f"✅ Dataset loaded: {len(dataset)} images")
     else:
-        # Real training loop
-        mask_generator.train()
+        print(f"❌ Dataset not found: {dataset_path}")
+        return
+    
+    # Model
+    model = ImprovedMaskGenerator().to(device)
+    print(f"✅ Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
+    
+    # Optimizer with better settings
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
+    
+    # Training parameters
+    epochs = 100  # Reduced since this model should converge faster
+    
+    print("\n🎯 Key Improvements:")
+    print("✅ U-Net architecture with skip connections")
+    print("✅ Multi-scale entropy detection")
+    print("✅ Edge-aware + Focal + Dice loss")
+    print("✅ Better contrast enhancement")
+    print("✅ AdamW optimizer with cosine scheduling")
+    
+    print(f"\n🏃 Starting training for {epochs} epochs...")
+    
+    best_loss = float('inf')
+    
+    for epoch in range(epochs):
+        model.train()
         total_loss = 0
-
+        
         progress_bar = tqdm(dataloader, desc=f'Epoch {epoch+1}/{epochs}')
-
+        
         for batch_idx, (images, target_masks) in enumerate(progress_bar):
             images = images.to(device)
             target_masks = target_masks.to(device)
-
+            
             # Forward pass
-            pred_masks = mask_generator(images)
-            loss = combined_mask_loss(pred_masks, target_masks)
-
+            pred_masks = model(images)
+            loss = improved_mask_loss(pred_masks, target_masks)
+            
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+            
             total_loss += loss.item()
             progress_bar.set_postfix({'Loss': f'{loss.item():.4f}'})
-
-            # Save masks for visualization (first batch of every 5th epoch)
-            if (epoch + 1) % 5 == 0 and batch_idx == 0:
+            
+            # Save visualization every 10 epochs
+            if (epoch + 1) % 10 == 0 and batch_idx == 0:
                 # Save individual masks
-                save_individual_masks(pred_masks, epoch+1, batch_idx, "generated_masks")
-
-                # Save comparison images (first 3 samples)
-                num_samples = min(3, images.size(0))
-                for i in range(num_samples):
-                    save_mask_comparison(
-                        images[i], target_masks[i], pred_masks[i],
-                        epoch+1, batch_idx, i, "mask_comparisons"
+                save_individual_masks(pred_masks, epoch+1, batch_idx, "improved_masks")
+                
+                # Save first 3 samples comparison
+                for i in range(min(3, images.size(0))):
+                    save_improved_comparison(
+                        images[i], target_masks[i], pred_masks[i], 
+                        epoch+1, batch_idx, i, "improved_comparisons"
                     )
-
-                print(f"\nMasks saved for epoch {epoch+1}")
-
+                print(f"\n✅ Improved masks and comparisons saved for epoch {epoch+1}")
+        
+        # Update learning rate
+        scheduler.step()
+        
         avg_loss = total_loss / len(dataloader)
-        print(f"Epoch {epoch+1}/{epochs} - Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch+1}/{epochs} - Average Loss: {avg_loss:.4f} - LR: {scheduler.get_last_lr()[0]:.2e}")
+        
+        # Save best model
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), 'improved_checkpoints/best_improved_mask_generator.pth')
+            print(f"✅ New best model saved! Loss: {best_loss:.4f}")
+        
+        # Save checkpoint every 25 epochs
+        if (epoch + 1) % 25 == 0:
+            torch.save(model.state_dict(), f'improved_checkpoints/improved_mask_epoch_{epoch+1}.pth')
+            print(f"📁 Checkpoint saved at epoch {epoch+1}")
+    
+    # Save final model
+    torch.save(model.state_dict(), 'improved_checkpoints/improved_mask_final.pth')
+    
+    print("\n" + "="*60)
+    print("🎉 IMPROVED TRAINING COMPLETED!")
+    print("="*60)
+    print(f"✅ Best loss achieved: {best_loss:.4f}")
+    print(f"📁 Models saved in: ./improved_checkpoints/")
+    print(f"🖼️ Comparisons saved in: ./improved_comparisons/")
+    print("="*60)
 
-    # Save checkpoint every 25 epochs
-    if (epoch + 1) % 25 == 0:
-        torch.save(mask_generator.state_dict(), f'mask_checkpoints/mask_generator_epoch_{epoch+1}.pth')
-        print(f"Checkpoint saved at epoch {epoch+1}")
-
-print("Training completed!")
-
-# Save final model
-torch.save(mask_generator.state_dict(), 'mask_checkpoints/mask_generator_final.pth')
-print("Final model saved!")
-
-print("\n" + "="*50)
-print("TRAINING SUMMARY:")
-print("="*50)
-print(f"✅ Model checkpoints saved in: ./mask_checkpoints/")
-print(f"✅ Generated masks saved in: ./generated_masks/")
-print(f"✅ Mask comparisons saved in: ./mask_comparisons/")
-print("="*50)
+if __name__ == "__main__":
+    main() 
