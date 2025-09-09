@@ -156,14 +156,14 @@ def main():
     print("="*50)
 
     # Dataset paths
-    input_folder = r".\MSEmb_DATASET\embs_s_unaligned\train\trainX_e"
-    output_folder = r".\MSEmb_DATASET\embs_s_unaligned\train\masks"
+    input_folder = r"./MSEmb_DATASET/embs_s_unaligned/train/trainX_e"
+    output_folder = r"./MSEmb_DATASET/embs_s_unaligned/train/masks"
 
     # Check if input folder exists
     if not os.path.exists(input_folder):
         print(f"❌ Input folder not found: {input_folder}")
         print("Available folders:")
-        base_path = r".\MSEmb_DATASET"
+        base_path = r"./MSEmb_DATASET"
         if os.path.exists(base_path):
             for root, dirs, files in os.walk(base_path):
                 if dirs:
