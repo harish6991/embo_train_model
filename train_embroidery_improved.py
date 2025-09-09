@@ -272,7 +272,7 @@ def train_epoch(epoch):
         d_loss_fake_35 = criterion_GAN(fake_output_35, fake_labels_35)
         d_loss_fake_70 = criterion_GAN(fake_output_70, fake_labels_70)
         d_loss_fake_140 = criterion_GAN(fake_output_140, fake_labels_140)
-        d_loss_fake = (d_loss_fake_35 + d_loss_fake_70 + d_loss_fake_140) / 3.0
+        d_loss_fake = (d_loss_fake_35 * 0.4 + d_loss_fake_70 * 0.5 + d_loss_fake_140 * 0.1 ) 
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
@@ -286,7 +286,7 @@ def train_epoch(epoch):
         g_loss_gan_35 = criterion_GAN(fake_output_35, real_labels_35)
         g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)
         g_loss_gan_140 = criterion_GAN(fake_output_140, real_labels_140)
-        g_loss_gan = (g_loss_gan_35 + g_loss_gan_70 + g_loss_gan_140) / 3.0
+        g_loss_gan = (g_loss_gan_35 * 0.4 + g_loss_gan_70 * 0.5 + g_loss_gan_140 * 0.1)
 
         # L1 loss with provided mask
         loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]
