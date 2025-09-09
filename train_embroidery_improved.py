@@ -118,17 +118,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = AlignedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train")
-
-to_pil = T.ToPILImage()
-
-inp, tgt, mask = train_dataset[0]
-
-
-to_pil = T.ToPILImage()
-
-inp, tgt, mask = train_dataset[0]
-
+train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_s_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_s_unaligned/train/trainX_e","./MSEmb_DATASET/embs_s_unaligned/train/generated_masks")
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(range(len(train_dataset)),test_size=0.1, random_state=42)
