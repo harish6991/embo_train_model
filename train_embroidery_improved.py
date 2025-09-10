@@ -251,28 +251,24 @@ def train_epoch(epoch):
         optimizer_D.zero_grad()
 
         # Real images
-        real_output_35, real_output_70, real_output_140 = discriminator(torch.cat([input_images, target_images], dim=1))
+        real_output_35, real_output_70 = discriminator(torch.cat([input_images, target_images], dim=1))
 
         # Create labels dynamically based on actual output sizes
         real_labels_35 = torch.ones_like(real_output_35)
         fake_labels_35 = torch.zeros_like(real_output_35)
         real_labels_70 = torch.ones_like(real_output_70)
         fake_labels_70 = torch.zeros_like(real_output_70)
-        real_labels_140 = torch.ones_like(real_output_140)
-        fake_labels_140 = torch.zeros_like(real_output_140)
 
         d_loss_real_35 = criterion_GAN(real_output_35, real_labels_35)
         d_loss_real_70 = criterion_GAN(real_output_70, real_labels_70)
-        d_loss_real_140 = criterion_GAN(real_output_140, real_labels_140)
-        d_loss_real = (d_loss_real_35 *0.3 + d_loss_real_70 *0.6 + d_loss_real_140 *0.1)
+        d_loss_real = (d_loss_real_35 * 0.4 + d_loss_real_70 * 0.6)
 
         # Fake images
         fake_images = generator(input_images)
-        fake_output_35, fake_output_70, fake_output_140 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
+        fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
         d_loss_fake_35 = criterion_GAN(fake_output_35, fake_labels_35)
         d_loss_fake_70 = criterion_GAN(fake_output_70, fake_labels_70)
-        d_loss_fake_140 = criterion_GAN(fake_output_140, fake_labels_140)
-        d_loss_fake = (d_loss_fake_35 * 0.4 + d_loss_fake_70 * 0.5 + d_loss_fake_140 * 0.1 ) 
+        d_loss_fake = (d_loss_fake_35 * 0.4 + d_loss_fake_70 * 0.6) 
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
@@ -282,11 +278,10 @@ def train_epoch(epoch):
         optimizer_G.zero_grad()
 
         # Adversarial loss
-        fake_output_35, fake_output_70, fake_output_140 = discriminator(torch.cat([input_images, fake_images], dim=1))
+        fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images], dim=1))
         g_loss_gan_35 = criterion_GAN(fake_output_35, real_labels_35)
         g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)
-        g_loss_gan_140 = criterion_GAN(fake_output_140, real_labels_140)
-        g_loss_gan = (g_loss_gan_35 * 0.4 + g_loss_gan_70 * 0.5 + g_loss_gan_140 * 0.1)
+        g_loss_gan = (g_loss_gan_35 * 0.4 + g_loss_gan_70 * 0.6)
 
         # L1 loss with provided mask
         loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]
