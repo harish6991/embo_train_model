@@ -91,7 +91,8 @@ def main():
 
     # Generate masks for different dataset splits
     datasets_to_process = [
-        ("./MSEmb_DATASET/embs_s_unaligned/train/trainX_e", "./MSEmb_DATASET/embs_s_unaligned/train/generated_masks")
+        ("./MSEmb_DATASET/embs_f_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_f_unaligned/train/generated_masks")
+
     ]
 
     for input_folder, output_folder in datasets_to_process:

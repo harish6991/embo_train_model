@@ -118,7 +118,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_s_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_s_unaligned/train/trainX_e","./MSEmb_DATASET/embs_s_unaligned/train/generated_masks")
+train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_f_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_f_unaligned/train/trainX_e","./MSEmb_DATASET/embs_f_unaligned/train/generated_masks")
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(range(len(train_dataset)),test_size=0.1, random_state=42)
@@ -268,7 +268,7 @@ def train_epoch(epoch):
         fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
         d_loss_fake_35 = criterion_GAN(fake_output_35, fake_labels_35)
         d_loss_fake_70 = criterion_GAN(fake_output_70, fake_labels_70)
-        d_loss_fake = (d_loss_fake_35 * 0.4 + d_loss_fake_70 * 0.6) 
+        d_loss_fake = (d_loss_fake_35 * 0.4 + d_loss_fake_70 * 0.6)
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
