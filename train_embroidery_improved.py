@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 20  # Reduced for better stability
+batch_size = 16  # Reduced for better stability
 epochs = 300  # More epochs for better convergence
 lambda_L1 = 200  # Increased L1 weight
 lambda_perceptual = 10  # Perceptual loss weight
@@ -61,7 +61,7 @@ class PerceptualLoss(nn.Module):
             x = x.repeat(1, 3, 1, 1)  # Repeat grayscale channel 3 times
         if y.shape[1] == 1:  # If target is grayscale (1 channel)
             y = y.repeat(1, 3, 1, 1)  # Repeat grayscale channel 3 times
-            
+
         x_features = self.features(x)
         y_features = self.features(y)
         return F.mse_loss(x_features, y_features)
@@ -124,7 +124,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_s_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_f_unaligned/train/trainX_e","./MSEmb_DATASET/embs_s_unaligned/train/generated_masks")
+train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_s_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_s_unaligned/train/trainX_e","./MSEmb_DATASET/embs_s_unaligned/train/generated_masks")
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(range(len(train_dataset)),test_size=0.1, random_state=42)
