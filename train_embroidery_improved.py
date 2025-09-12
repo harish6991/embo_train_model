@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-batch_size = 16  # Reduced for better stability
+batch_size = 20  # Reduced for better stability
 epochs = 300  # More epochs for better convergence
 lambda_L1 = 200  # Increased L1 weight
 lambda_perceptual = 10  # Perceptual loss weight
@@ -56,6 +56,12 @@ class PerceptualLoss(nn.Module):
             param.requires_grad = False
 
     def forward(self, x, y):
+        # Convert grayscale to 3-channel for VGG
+        if x.shape[1] == 1:  # If input is grayscale (1 channel)
+            x = x.repeat(1, 3, 1, 1)  # Repeat grayscale channel 3 times
+        if y.shape[1] == 1:  # If target is grayscale (1 channel)
+            y = y.repeat(1, 3, 1, 1)  # Repeat grayscale channel 3 times
+            
         x_features = self.features(x)
         y_features = self.features(y)
         return F.mse_loss(x_features, y_features)
@@ -65,7 +71,7 @@ class SSIMLoss(nn.Module):
         super().__init__()
         self.window_size = window_size
         self.size_average = size_average
-        self.channel = 3
+        self.channel = 1  # Changed from 3 to 1 for grayscale
         self.window = self.create_window(window_size, self.channel)
 
     def gaussian(self, window_size, sigma):
@@ -118,7 +124,7 @@ class SSIMLoss(nn.Module):
         return 1 - self._ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 # Data loading with train/validation split
-train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_f_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_f_unaligned/train/trainX_e","./MSEmb_DATASET/embs_f_unaligned/train/generated_masks")
+train_dataset = PrefixStitchDataset("./MSEmb_DATASET/embs_s_unaligned/train/trainX_c", "./MSEmb_DATASET/embs_f_unaligned/train/trainX_e","./MSEmb_DATASET/embs_s_unaligned/train/generated_masks")
 
 # Split dataset into train and validation
 train_indices, val_indices = train_test_split(range(len(train_dataset)),test_size=0.1, random_state=42)
@@ -158,8 +164,8 @@ def init_weights(net, init_type='normal', init_gain=0.02):
 
 # Initialize models
 generator = UnetGenerator(
-    input_nc=3,
-    output_nc=3,
+    input_nc=1,  # Changed from 3 to 1 for grayscale
+    output_nc=1,  # Changed from 3 to 1 for grayscale
     num_downs=6,
     ngf=64,
     norm_layer=nn.BatchNorm2d,
@@ -167,7 +173,7 @@ generator = UnetGenerator(
 ).to(device)
 
 discriminator = MultiScaleDiscriminator(
-    input_nc=6  # 3 channels input + 3 channels target
+    input_nc=2  # Changed from 6 to 2: 1 channel input + 1 channel target
 ).to(device)
 
 # Load existing best model if available - Updated for model continuation
@@ -261,14 +267,14 @@ def train_epoch(epoch):
 
         d_loss_real_35 = criterion_GAN(real_output_35, real_labels_35)
         d_loss_real_70 = criterion_GAN(real_output_70, real_labels_70)
-        d_loss_real = (d_loss_real_35 * 0.4 + d_loss_real_70 * 0.6)
+        d_loss_real = (d_loss_real_35 + d_loss_real_70) / 2
 
         # Fake images
         fake_images = generator(input_images)
         fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images.detach()], dim=1))
         d_loss_fake_35 = criterion_GAN(fake_output_35, fake_labels_35)
         d_loss_fake_70 = criterion_GAN(fake_output_70, fake_labels_70)
-        d_loss_fake = (d_loss_fake_35 * 0.4 + d_loss_fake_70 * 0.6)
+        d_loss_fake = (d_loss_fake_35  + d_loss_fake_70)/ 2
 
         d_loss = (d_loss_real + d_loss_fake) * 0.5
         d_loss.backward()
@@ -281,7 +287,7 @@ def train_epoch(epoch):
         fake_output_35, fake_output_70 = discriminator(torch.cat([input_images, fake_images], dim=1))
         g_loss_gan_35 = criterion_GAN(fake_output_35, real_labels_35)
         g_loss_gan_70 = criterion_GAN(fake_output_70, real_labels_70)
-        g_loss_gan = (g_loss_gan_35 * 0.4 + g_loss_gan_70 * 0.6)
+        g_loss_gan = (g_loss_gan_35 + g_loss_gan_70) / 2
 
         # L1 loss with provided mask
         loss_map = criterion_L1(fake_images, target_images)  # [B,3,H,W]

@@ -18,11 +18,11 @@ class PrefixStitchDataset(Dataset):
             f for f in os.listdir(image_dir) if f.startswith("c_")
         ]
 
-        # Define transforms for images and targets
+        # Define transforms for images and targets (GRAYSCALE)
         self.image_transform = T.Compose([
             T.Resize((image_size, image_size)),
             T.ToTensor(),
-            T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1]
+            T.Normalize(mean=[0.5], std=[0.5])  # Single channel normalization for grayscale
         ])
         
         # Define transform for masks (no normalization)
@@ -31,7 +31,7 @@ class PrefixStitchDataset(Dataset):
             T.ToTensor(),  # Keep masks in [0, 1] range
         ])
 
-        print(f"📁 PrefixStitchDataset initialized:")
+        print(f"📁 PrefixStitchDataset initialized (GRAYSCALE MODE):")
         print(f"   📂 Images: {image_dir} ({len(self.image_files)} c_ files)")
         print(f"   📂 Targets: {tgt_dir}")
         print(f"   📂 Masks: {mask_dir}")
@@ -57,15 +57,15 @@ class PrefixStitchDataset(Dataset):
             mask_name = tgt_name  # Try with e_ prefix
             mask_path = os.path.join(self.mask_dir, mask_name)
 
-        # Load image
-        image = Image.open(img_path).convert("RGB")
+        # Load image as GRAYSCALE
+        image = Image.open(img_path).convert("L")
 
-        # Load target (if exists)
+        # Load target as GRAYSCALE (if exists)
         if os.path.exists(tgt_path):
-            tgt_img = Image.open(tgt_path).convert("RGB")
+            tgt_img = Image.open(tgt_path).convert("L")
         else:
             # Create a black target if file doesn't exist
-            tgt_img = Image.new("RGB", image.size, (0, 0, 0))
+            tgt_img = Image.new("L", image.size, 0)
             
         # Load mask (if exists)
         if os.path.exists(mask_path):
