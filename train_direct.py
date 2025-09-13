@@ -47,7 +47,7 @@ def create_options():
             self.direction = "AtoB"
             self.serial_batches = False
             self.num_threads = 8
-            self.batch_size = 8
+            self.batch_size = 2
             self.load_size = 286
             self.crop_size = 256
             self.max_dataset_size = float("inf")
