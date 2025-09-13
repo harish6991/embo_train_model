@@ -114,9 +114,8 @@ total_iters = 0
 
 try:
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
-        epoch_start_time = torch.cuda.Event(enable_timing=True) if torch.cuda.is_available() else None
-        if epoch_start_time:
-            epoch_start_time.record()
+        import time
+        epoch_start_time = time.time()
         
         # Update learning rates
         model.update_learning_rate()
@@ -148,14 +147,9 @@ try:
             model.save_networks(epoch)
         
         # Print epoch summary
-        if epoch_start_time and torch.cuda.is_available():
-            epoch_end_time = torch.cuda.Event(enable_timing=True)
-            epoch_end_time.record()
-            epoch_time = epoch_start_time.elapsed_time(epoch_end_time) / 1000
-            print(f'End of epoch {epoch:3d} / {opt.n_epochs + opt.n_epochs_decay} '
-                  f'Time: {epoch_time:.1f}s')
-        else:
-            print(f'End of epoch {epoch:3d} / {opt.n_epochs + opt.n_epochs_decay}')
+        epoch_time = time.time() - epoch_start_time
+        print(f'End of epoch {epoch:3d} / {opt.n_epochs + opt.n_epochs_decay} '
+              f'Time: {epoch_time:.1f}s')
 
 except KeyboardInterrupt:
     print(f"\nTraining interrupted by user at epoch {epoch}")
