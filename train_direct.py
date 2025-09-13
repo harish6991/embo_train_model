@@ -47,13 +47,13 @@ def create_options():
             self.direction = "AtoB"
             self.serial_batches = False
             self.num_threads = 8
-            self.batch_size = 4
-            self.load_size = 572
-            self.crop_size = 512
+            self.batch_size = 8
+            self.load_size = 286
+            self.crop_size = 256
             self.max_dataset_size = float("inf")
             self.preprocess = "scale_width_and_crop"
             self.no_flip = False
-            self.display_winsize = 512
+            self.display_winsize = 256
             
             # Additional parameters
             self.epoch = "latest"
@@ -140,8 +140,8 @@ def train_cyclegan():
     # Training loop
     print(f"\n3. Starting training...")
     print(f"   Epochs: {opt.n_epochs} + {opt.n_epochs_decay} decay")
-    print(f"   Batch size: {opt.batch_size} (memory optimized for 512x512)")
-    print(f"   Image size: {opt.crop_size}x{opt.crop_size} (high resolution)")
+    print(f"   Batch size: {opt.batch_size} (optimized for RTX 5080)")
+    print(f"   Image size: {opt.crop_size}x{opt.crop_size} (memory optimized)")
     print(f"   Data threads: {opt.num_threads}")
     print(f"   Preprocessing: {opt.preprocess}")
     print("=" * 60)
