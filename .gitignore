@@ -195,7 +195,6 @@ saved_models/
 tensorboard_logs/
 
 # Data files (usually large)
-data/
 datasets/
 *.jpg
 *.jpeg
