@@ -149,7 +149,9 @@ try:
         
         # Print epoch summary
         if epoch_start_time and torch.cuda.is_available():
-            epoch_time = epoch_start_time.elapsed_time(torch.cuda.Event(enable_timing=True)) / 1000
+            epoch_end_time = torch.cuda.Event(enable_timing=True)
+            epoch_end_time.record()
+            epoch_time = epoch_start_time.elapsed_time(epoch_end_time) / 1000
             print(f'End of epoch {epoch:3d} / {opt.n_epochs + opt.n_epochs_decay} '
                   f'Time: {epoch_time:.1f}s')
         else:
