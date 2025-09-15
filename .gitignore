@@ -242,3 +242,5 @@ config.ini
 secrets.json
 .env.local
 .env.production
+test_embroidery_only.py
+test_latest_model.py

@@ -55,7 +55,7 @@ class TrainOptions:
         self.lambda_B = 10.0
         self.lambda_identity = 0.5
         self.pool_size = 50
-        self.batch_size = 32
+        self.batch_size = 16
         self.direction = 'AtoB'  # you can swap this
         
         # Additional required parameters
