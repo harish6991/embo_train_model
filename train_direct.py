@@ -21,7 +21,7 @@ from utils.align import AlignedEmbroideryDataset
 
 train_dataset = AlignedEmbroideryDataset("./MSEmb_DATASET/embs_all_aligned/train")
 
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 
 class TrainOptions:
     def __init__(self):
