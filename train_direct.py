@@ -19,9 +19,9 @@ from models.cycle_gan_model import CycleGANModel
 from utils.align import AlignedEmbroideryDataset
 
 
-train_dataset = AlignedEmbroideryDataset("./MSEmb_DATASET/embs_s_aligned/train")
+train_dataset = AlignedEmbroideryDataset("./MSEmb_DATASET/embs_all_aligned/train")
 
-train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 
 class TrainOptions:
     def __init__(self):
